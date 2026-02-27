@@ -1,21 +1,51 @@
 # Live Data Ingestion Redesign
 
-## Current State: CSV + Google Drive
+## Current State: CSV + Google Drive + analyze-today.py
+
+The actual end-to-end pipeline today:
 
 ```
-BookMap/Platform                    Cloud
-─────────────────                   ─────
-CSV dump to disk ──▶ Google Drive ──▶ Sync to cloud
-(every 1 min)        (file sync)      (variable latency)
+NinjaTrader (5-min OHLCV+VWAP CSV export, NQ/ES/YM)
+    │
+    ▼
+Google Drive (CSV hosting)
+    │
+    ▼
+analyze-today.py (downloads CSVs every 2 min)
+    │
+    ├──▶ orchestrator.py (12 modules → deterministic JSON snapshot)
+    │        ├── premarket.py (Asia/London/ON levels, SMT divergence)
+    │        ├── ib_location.py (IB range, technicals)
+    │        ├── volume_profile.py (POC/VAH/VAL/HVN/LVN)
+    │        ├── tpo_profile.py (TPO letters, profile shape)
+    │        ├── dpoc_migration.py (DPOC movement tracking)
+    │        ├── wick_parade.py (responsive buying/selling)
+    │        ├── ninety_min_pd_arrays.py (premium/discount zones)
+    │        ├── fvg_detection.py (multi-TF FVGs, BPR)
+    │        └── core_confluences.py (meta: boolean signals from all above)
+    │
+    ├──▶ Local LLM (localhost:8001, LoRA fine-tuned model)
+    │        └── Produces ROCKIT v5.6 analysis (day type, bias, levels,
+    │            liquidity sweeps, TPO read, confidence, one-liner)
+    │
+    └──▶ JSONL output {input: snapshot, output: llm_analysis}
+             │
+             ▼
+         GCS bucket "rockit-data" (uploaded incrementally)
+             │
+             ▼
+         RockitAPI → RockitUI / NinjaTrader
 ```
 
 **Problems:**
-- 1-minute resolution ceiling (batch by nature)
 - Google Drive sync adds unpredictable latency (seconds to minutes)
+- 2-minute polling cycle in `analyze-today.py` adds another layer of delay
 - File-based sync is fragile (conflicts, partial writes, quota limits)
-- No schema validation — bad data propagates silently
-- Hard to scale or add new data sources
+- The pipeline is a single long script — failure at any stage stops everything
+- No schema validation — bad CSV data or LLM hallucinations propagate silently
+- `analyze-today.py` has retry/repair logic for bad LLM responses, but it's fragile
 - No replay capability for debugging
+- Two LLM backends (`analyze-today.py` at port 8001, `analyze-today-glm.py` at port 8356) — no unified config
 
 ---
 

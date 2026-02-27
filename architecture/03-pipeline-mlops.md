@@ -67,6 +67,57 @@ steps:
 
 ---
 
+## Current Training Data Format (Preserved)
+
+The existing training data format is JSONL with `{input, output}` pairs. This format is preserved in the new pipeline.
+
+**Input** (deterministic snapshot from `orchestrator.py`):
+```json
+{
+  "session_date": "2026-01-02",
+  "current_et_time": "11:45",
+  "premarket": { "asia": {...}, "london": {...}, "overnight": {...} },
+  "intraday": {
+    "ib": { "high": 21850, "low": 21780, "range": 70, "mid": 21815, ... },
+    "volume_profile": { "poc": 21820, "vah": 21845, "val": 21790, ... },
+    "tpo_profile": { "letters": [...], "single_prints": [...], "shape": "p-shape" },
+    "dpoc_migration": { "direction": "up", "magnitude": 15, ... },
+    "wick_parade": { "bullish": 8, "bearish": 3 },
+    "fvg_detection": { "daily": [...], "15min": [...], ... },
+    "ninety_min_pd_arrays": { ... }
+  },
+  "core_confluences": {
+    "ib_acceptance": {...}, "dpoc_vs_ib": {...},
+    "dpoc_compression": {...}, "price_location": {...},
+    "tpo_signals": {...}, "migration": {...}
+  }
+}
+```
+
+**Output** (LLM analysis following ROCKIT v5.6 rules — 11 mandatory sections):
+```json
+{
+  "day_type": "P-Day (Bullish)",
+  "lanto_3_model": { "drawn_bias": 1, "price_action": 1, "entry_model": 0, "score": "2/3" },
+  "bias": "Long",
+  "key_levels": { "ibh": 21850, "ibl": 21780, "vah": 21845, "val": 21790, "dpoc": 21820 },
+  "liquidity_sweeps": { "asia_high": "Tested", "london_low": "Swept", ... },
+  "atr_regime": "Normal",
+  "value_acceptance": { "poc_location": "upper_third", ... },
+  "tpo_read": { "profile_signals": [...], "dpoc_migration": "...", "compression": false },
+  "confidence": 72,
+  "day_type_reasoning": ["IB accepted above prior VAH...", "DPOC migrating up..."],
+  "one_liner": "Bullish P-Day developing with DPOC migration..."
+}
+```
+
+**Data volumes:**
+- `back-test.py` generates ~252 days × 30 time slices = ~7,500 training examples
+- Three annotation sources: local fine-tuned model, GLM-4.7-Flash, xAI Grok
+- Stored in RockitDataFeed: `local-analysis/`, `local-analysis-format/`, `xai-analysis/`
+
+---
+
 ## Phase 2: Training Pipeline (MLOps)
 
 **Trigger:** New deterministic data lands in GCS (after Phase 1 completes on `main`)
