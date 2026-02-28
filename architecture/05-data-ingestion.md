@@ -1,80 +1,99 @@
 # Live Data Ingestion Redesign
 
-## Current State: CSV + Google Drive + analyze-today.py
+> **Revision 2** — Updated after inspecting actual `analyze-today.py` (500+ lines) in rockit-framework
+> and confirming RockitAPI is a journal app, not a signals API.
 
-The actual end-to-end pipeline today:
+## Current State: What Actually Runs Today
+
+From inspecting `rockit-framework/analyze-today.py`:
 
 ```
-NinjaTrader (5-min OHLCV+VWAP CSV export, NQ/ES/YM)
+NinjaTrader (exports 1-min OHLCV+volumetric CSV for NQ/ES/YM)
     │
     ▼
-Google Drive (CSV hosting)
+Google Drive (CSV hosting — unreliable sync)
     │
     ▼
-analyze-today.py (downloads CSVs every 2 min)
+analyze-today.py (downloads CSVs from Google Drive every 2 min)
     │
-    ├──▶ orchestrator.py (12 modules → deterministic JSON snapshot)
-    │        ├── premarket.py (Asia/London/ON levels, SMT divergence)
-    │        ├── ib_location.py (IB range, technicals)
-    │        ├── volume_profile.py (POC/VAH/VAL/HVN/LVN)
-    │        ├── tpo_profile.py (TPO letters, profile shape)
-    │        ├── dpoc_migration.py (DPOC movement tracking)
-    │        ├── wick_parade.py (responsive buying/selling)
-    │        ├── ninety_min_pd_arrays.py (premium/discount zones)
-    │        ├── fvg_detection.py (multi-TF FVGs, BPR)
-    │        └── core_confluences.py (meta: boolean signals from all above)
+    ├──▶ orchestrator.py (38 modules → deterministic JSON snapshot)
+    │        ├── premarket.py (Asia/London/ON levels, compression, SMT)
+    │        ├── ib_location.py (IB range, price vs IB, technicals)
+    │        ├── volume_profile.py (POC/VAH/VAL/HVN/LVN, current + prior days)
+    │        ├── tpo_profile.py (TPO shape, fattening zones, single prints)
+    │        ├── dpoc_migration.py (30-min DPOC slices, migration direction)
+    │        ├── wick_parade.py (bullish/bearish wick counts, 60-min window)
+    │        ├── ninety_min_pd_arrays.py (premium/discount, expansion status)
+    │        ├── fvg_detection.py (daily/4H/1H/90min FVGs)
+    │        ├── globex_va_analysis.py (80% rule)
+    │        ├── twenty_percent_rule.py (IB extension breakout)
+    │        ├── va_edge_fade.py (VA poke-and-fail setups)
+    │        ├── core_confluences.py (boolean signal confluences from all above)
+    │        ├── inference_engine.py (8 high-priority deterministic rules)
+    │        ├── decision_engine.py (day type classification)
+    │        ├── cri.py (Contextual Readiness Index)
+    │        ├── dalton.py (trend strength quantification)
+    │        ├── playbook_engine.py (10 fundamental playbooks)
+    │        ├── balance_classification.py, mean_reversion_engine.py
+    │        ├── or_reversal.py, edge_fade.py
+    │        └── + more modules (38 total, 9,293 LOC)
     │
-    ├──▶ Local LLM (localhost:8001, LoRA fine-tuned model)
-    │        └── Produces ROCKIT v5.6 analysis (day type, bias, levels,
-    │            liquidity sweeps, TPO read, confidence, one-liner)
+    ├──▶ Local LLM (localhost:8001, Qwen 2.5 14B with LoRA)
+    │        └── Produces ROCKIT v5.6 analysis
+    │            (day type, LANTO model, bias, key levels, confidence, one-liner)
     │
     └──▶ JSONL output {input: snapshot, output: llm_analysis}
              │
              ▼
-         GCS bucket "rockit-data" (uploaded incrementally)
+         GCS bucket "rockit-data" (uploaded incrementally after each LLM call)
              │
              ▼
-         RockitAPI → RockitUI / NinjaTrader
+         RockitAPI (journal CRUD app — does NOT serve this data to clients)
+         NinjaTrader (standalone C# — does NOT consume this data)
 ```
 
-**Problems:**
-- Google Drive sync adds unpredictable latency (seconds to minutes)
-- 2-minute polling cycle in `analyze-today.py` adds another layer of delay
-- File-based sync is fragile (conflicts, partial writes, quota limits)
-- The pipeline is a single long script — failure at any stage stops everything
-- No schema validation — bad CSV data or LLM hallucinations propagate silently
-- `analyze-today.py` has retry/repair logic for bad LLM responses, but it's fragile
-- No replay capability for debugging
-- Two LLM backends (`analyze-today.py` at port 8001, `analyze-today-glm.py` at port 8356) — no unified config
+**The actual problems:**
+1. **Google Drive sync** — Adds seconds to minutes of unpredictable latency. Sometimes files don't sync.
+2. **2-minute polling** — `analyze-today.py` downloads CSVs every 2 minutes, so signals are always at least 2 minutes stale.
+3. **Single script, single point of failure** — If `analyze-today.py` crashes during market hours, everything stops. No automatic restart.
+4. **Two LLM backends** — `analyze-today.py` uses port 8001, `analyze-today-glm.py` uses port 8356. No unified config.
+5. **No consumers** — The JSONL output goes to GCS but nothing reads it in real-time. RockitAPI is a journal app. NinjaTrader runs its own standalone strategies.
+6. **No schema validation** — Bad CSV data or LLM hallucinations propagate into training data silently.
+7. **No replay** — Can't re-run a past session's analysis. No event sourcing.
 
 ---
 
-## Proposed Options (from simplest to most robust)
+## Proposed Options (Simplest to Most Robust)
 
-### Option 1: Direct GCS Upload (Simplest — Start Here)
+### Option 1: Direct GCS Upload (Start Here)
 
-Replace Google Drive with direct uploads to GCS. Minimal change to existing workflow.
+Replace Google Drive with a local file watcher that uploads CSVs directly to GCS. Minimal change to existing workflow.
 
 ```
-BookMap/Platform                        GCP
-─────────────────                       ───
-CSV dump to disk ──▶ Local watcher ──▶ GCS Bucket
-(every 1 min)        (rockit-ingest)    (gs://rockit-live-data/)
-                                            │
-                                            ▼
-                                        Cloud Function / Eventarc
-                                            │
-                                            ▼
-                                        rockit-serve (processes new data)
+NinjaTrader CSV export                     GCP
+────────────────────                       ───
+CSV dump to disk ──▶ rockit-ingest ──▶ GCS bucket (gs://rockit-live/)
+(every 1 min)       (file watcher)             │
+                                               ▼
+                                          Eventarc trigger
+                                               │
+                                               ▼
+                                          rockit-serve (runs orchestrator
+                                           + optional LLM → annotations)
+                                               │
+                                     ┌─────────┼─────────┐
+                                     ▼         ▼         ▼
+                               NinjaTrader  TradingView  Dashboard
+                               (API client) (webhooks)   (React)
 ```
 
 ```python
-# packages/rockit-ingest/src/rockit_ingest/collectors/gcs_uploader.py
-import time
+# packages/rockit-ingest/src/rockit_ingest/collectors/csv_watcher.py
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from google.cloud import storage
+import time
 
 class CSVUploader(FileSystemEventHandler):
     def __init__(self, bucket_name: str, prefix: str):
@@ -82,20 +101,18 @@ class CSVUploader(FileSystemEventHandler):
         self.bucket = self.client.bucket(bucket_name)
         self.prefix = prefix
 
-    def on_created(self, event):
+    def on_modified(self, event):
+        """Trigger on modify (NinjaTrader appends to existing CSV)."""
         if not event.src_path.endswith('.csv'):
             return
         path = Path(event.src_path)
-        # Wait for file to finish writing
         self._wait_for_stable(path)
-        # Upload to GCS
         blob_name = f"{self.prefix}/{path.name}"
         blob = self.bucket.blob(blob_name)
         blob.upload_from_filename(str(path))
-        print(f"Uploaded {path.name} → gs://{self.bucket.name}/{blob_name}")
 
     def _wait_for_stable(self, path: Path, timeout: float = 10.0):
-        """Wait until file size stops changing."""
+        """Wait until file size stops changing (NinjaTrader done writing)."""
         prev_size = -1
         start = time.time()
         while time.time() - start < timeout:
@@ -104,153 +121,95 @@ class CSVUploader(FileSystemEventHandler):
                 return
             prev_size = curr_size
             time.sleep(0.5)
-
-def run_watcher(watch_dir: str, bucket: str, prefix: str):
-    handler = CSVUploader(bucket, prefix)
-    observer = Observer()
-    observer.schedule(handler, watch_dir, recursive=False)
-    observer.start()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
 ```
 
-**Pros:** Simple, reuses CSV workflow, 2-5 second end-to-end latency
-**Cons:** Still file-based, still 1-minute batches
+**Pros:** Dead simple, reuses CSV workflow, 2-5 second latency, no Google Drive
+**Cons:** Still file-based, still batch (1-minute granularity)
 
----
+### Option 2: Direct API Push (Recommended Next Step)
 
-### Option 2: Direct API Push (Recommended)
-
-Instead of writing CSVs, push data directly to the Rockit API over HTTP.
+Instead of uploading CSVs, push data directly to the signals API:
 
 ```
-BookMap/Platform                        GCP
-─────────────────                       ───
-Local collector  ──▶  HTTPS POST  ──▶  rockit-serve
-(rockit-ingest)       (every tick       (Cloud Run)
-                       or every N sec)      │
-                                            ├──▶ Process & compute signals
-                                            ├──▶ Store to GCS (archival)
-                                            └──▶ Push to WebSocket clients
+NinjaTrader CSV export                     GCP
+────────────────────                       ───
+CSV dump to disk ──▶ rockit-ingest ──▶ HTTPS POST ──▶ rockit-serve
+(every 1 min)       (watcher + parser)    /api/v1/ingest    │
+                                                             ├──▶ Run orchestrator (38 modules)
+                                                             ├──▶ Optional LLM inference
+                                                             ├──▶ Generate annotations + setups
+                                                             ├──▶ Push to WebSocket clients
+                                                             └──▶ Archive to GCS
 ```
 
 ```python
 # packages/rockit-ingest/src/rockit_ingest/collectors/api_push.py
 import csv
-import time
 import httpx
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 class APIPusher(FileSystemEventHandler):
-    """Watch for CSV files and push data directly to API."""
-
     def __init__(self, api_url: str, api_key: str):
-        self.api_url = api_url
         self.client = httpx.Client(
             base_url=api_url,
             headers={"Authorization": f"Bearer {api_key}"},
-            timeout=10.0,
+            timeout=30.0,
         )
 
-    def on_created(self, event):
+    def on_modified(self, event):
         if not event.src_path.endswith('.csv'):
             return
         path = Path(event.src_path)
         self._wait_for_stable(path)
-        rows = self._parse_csv(path)
-        self._push_data(rows)
-
-    def _parse_csv(self, path: Path) -> list[dict]:
-        with open(path) as f:
-            return list(csv.DictReader(f))
-
-    def _push_data(self, rows: list[dict]):
-        resp = self.client.post("/api/v1/ingest", json={"bars": rows})
-        resp.raise_for_status()
-
-    def _wait_for_stable(self, path: Path, timeout: float = 10.0):
-        prev_size = -1
-        start = time.time()
-        while time.time() - start < timeout:
-            curr_size = path.stat().st_size
-            if curr_size == prev_size and curr_size > 0:
-                return
-            prev_size = curr_size
-            time.sleep(0.5)
+        # Parse new rows since last push
+        rows = self._parse_new_rows(path)
+        if rows:
+            self.client.post("/api/v1/ingest", json={
+                "instrument": self._instrument_from_filename(path.name),
+                "bars": rows,
+            })
 ```
 
-**Pros:** Data goes directly to processing, no intermediate storage hop, sub-second latency
-**Cons:** Requires API to handle ingest (slightly more API complexity)
+**Pros:** Sub-second end-to-end, server processes immediately, archives automatically
+**Cons:** Requires the signals API to exist (it doesn't today)
+
+### Option 3: Pub/Sub Streaming (Future — Only If Needed)
+
+For multi-consumer scenarios or if latency becomes critical:
+
+```
+Local collector ──HTTPS──▶ GCP Pub/Sub topic ──▶ rockit-serve (signals)
+                                              ──▶ GCS archiver (storage)
+                                              ──▶ rockit-train (live eval)
+```
+
+**Pros:** Decoupled, replay-capable, infinite scale
+**Cons:** More infrastructure than needed right now
 
 ---
 
-### Option 3: Pub/Sub Streaming (Most Scalable)
-
-For future scaling, use GCP Pub/Sub as the data backbone:
+## Migration Path
 
 ```
-BookMap/Platform           GCP Pub/Sub              Subscribers
-─────────────────          ───────────              ───────────
-Local collector ──HTTPS──▶ Topic: market-data ──▶  rockit-serve (signals)
-                                              ──▶  GCS archiver (storage)
-                                              ──▶  rockit-train (live eval)
+Phase 1 (Now)              Phase 2 (With API)          Phase 3 (If Needed)
+──────────────              ──────────────────          ────────────────────
+Option 1: GCS Upload        Option 2: API Push          Option 3: Pub/Sub
+
+- Keep CSV workflow         - Remove CSV dependency     - Full event streaming
+- Replace Google Drive      - Direct HTTP push          - Multi-consumer
+  with file watcher → GCS   - Sub-second latency        - Replay capability
+- 2-5s latency             - Server-side archival
+- analyze-today.py refactored
+  to read from GCS instead
+  of Google Drive
 ```
 
-```python
-# packages/rockit-ingest/src/rockit_ingest/publishers/pubsub.py
-from google.cloud import pubsub_v1
-import json
-
-class MarketDataPublisher:
-    def __init__(self, project_id: str, topic_id: str):
-        self.publisher = pubsub_v1.PublisherClient()
-        self.topic_path = self.publisher.topic_path(project_id, topic_id)
-
-    def publish_bars(self, instrument: str, bars: list[dict]):
-        for bar in bars:
-            data = json.dumps({
-                "instrument": instrument,
-                "timestamp": bar["timestamp"],
-                "open": float(bar["open"]),
-                "high": float(bar["high"]),
-                "low": float(bar["low"]),
-                "close": float(bar["close"]),
-                "volume": int(bar["volume"]),
-            }).encode("utf-8")
-
-            future = self.publisher.publish(
-                self.topic_path,
-                data,
-                instrument=instrument,
-            )
-            future.result()  # Block until published
-```
-
-**Pros:** Decoupled, multiple consumers, replay capability, scales infinitely
-**Cons:** More infrastructure, higher complexity
-
----
-
-## Recommended Migration Path
-
-```
-Phase 1 (Now)           Phase 2 (Next)           Phase 3 (Later)
-─────────────           ──────────────           ────────────────
-Option 1: GCS Upload    Option 2: API Push       Option 3: Pub/Sub
-                                                 (only if needed)
-- Keep CSV workflow     - Remove CSV dependency
-- Replace Google Drive  - Direct HTTP push        - Full event streaming
-- Add file watcher      - Sub-second latency      - Multi-consumer
-- 2-5s latency          - Server-side archival     - Replay capability
-```
-
-**Start with Option 1** because it requires the least change to your existing BookMap setup. You just replace Google Drive with a local script that uploads to GCS. Then move to Option 2 when you're ready to eliminate CSV files entirely.
+**Start with Option 1** because:
+1. It requires the least change to the existing BookMap/NinjaTrader setup
+2. The signals API doesn't exist yet, so Option 2 isn't possible immediately
+3. You can validate the GCS pipeline while building the API in parallel
 
 ---
 
@@ -258,51 +217,69 @@ Option 1: GCS Upload    Option 2: API Push       Option 3: Pub/Sub
 
 ```
 gs://rockit-data/
-├── live/                          # Real-time incoming data
+├── live/                              # Real-time incoming data
+│   ├── NQ/
+│   │   └── 2025-01-15/
+│   │       ├── NQ_Volumetric_1.csv    # Raw from NinjaTrader
+│   │       └── snapshots/
+│   │           ├── 09-30.json         # Deterministic snapshot
+│   │           ├── 09-35.json
+│   │           └── ...
 │   ├── ES/
-│   │   ├── 2024-01-15/
-│   │   │   ├── 09-30.csv
-│   │   │   ├── 09-31.csv
-│   │   │   └── ...
-│   │   └── 2024-01-16/
-│   └── NQ/
-│       └── ...
-├── historical/                    # Curated historical data
-│   ├── ES/
-│   │   └── sessions.parquet       # Consolidated session data
-│   └── NQ/
-├── deterministic/                 # Generated deterministic data
-│   ├── {commit_sha}/
-│   │   └── output.parquet
+│   └── YM/
+│
+├── historical/                        # Curated historical data
+│   └── csv/                           # Consolidated CSV archive
+│
+├── deterministic/                     # Generated deterministic snapshots
+│   ├── {commit_sha}/                  # Version-tagged by code version
+│   │   └── {session_date}/
+│   │       └── snapshots.jsonl
 │   └── latest -> {commit_sha}/
-├── training/                      # Training datasets
+│
+├── training/                          # Training datasets
+│   ├── local-analysis/                # Existing 252 days (migrated from RockitDataFeed)
+│   ├── xai-analysis/                  # Existing 43 days (migrated from RockitDataFeed)
 │   ├── {run_id}/
-│   │   ├── train.parquet
-│   │   ├── val.parquet
-│   │   └── test.parquet
+│   │   ├── train.jsonl
+│   │   ├── val.jsonl
+│   │   └── test.jsonl
 │   └── latest -> {run_id}/
-└── models/                        # Trained models
-    ├── {version}/
-    │   ├── model.safetensors
-    │   └── metrics.json
-    └── production -> {version}/
+│
+├── models/                            # Trained models
+│   ├── qwen-30b/
+│   │   ├── v001/
+│   │   └── production -> v001/
+│   └── qwen-70b/
+│       └── ...
+│
+├── config/                            # App configs (from existing RockitAPI)
+│   └── users.json
+│
+└── journals/                          # Trading journals (from existing RockitAPI)
+    └── {username}/
+        └── YYYY-MM-DD.json
 ```
 
 ---
 
-## Local Development Setup
-
-For local development, the ingestion pipeline runs against a local directory or a local emulator:
+## Local Development
 
 ```bash
-# Watch a local directory and push to local API
+# Watch a local directory and upload to GCS (Option 1)
+python -m rockit_ingest.collectors.csv_watcher \
+  --watch-dir "C:/Users/lehph/NinjaTrader/export/" \
+  --bucket rockit-data \
+  --prefix live/NQ/$(date +%Y-%m-%d)
+
+# Watch and push to local API (Option 2, once API exists)
 python -m rockit_ingest.collectors.api_push \
-  --watch-dir /path/to/bookmap/export/ \
+  --watch-dir "C:/Users/lehph/NinjaTrader/export/" \
   --api-url http://localhost:8000
 
-# Or upload to GCS emulator
-python -m rockit_ingest.collectors.gcs_uploader \
-  --watch-dir /path/to/bookmap/export/ \
-  --bucket rockit-live-data \
-  --emulator-host localhost:9023
+# Replay a historical session through the pipeline
+python -m rockit_core.deterministic.orchestrator \
+  --csv data/raw_csv/NQ_Volumetric_1.csv \
+  --date 2025-01-02 \
+  --output data/json_snapshots/
 ```

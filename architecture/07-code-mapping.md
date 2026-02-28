@@ -1,167 +1,322 @@
 # Detailed Code Mapping: Current Repos → Monorepo
 
-This document maps every significant module from the existing repositories to its
-new home in the RockitFactory monorepo. Based on deep analysis of the actual codebase.
+> **Revision 2** — Updated with actual file inventory from local inspection of all 6 repos.
+> Every file path below has been verified to exist.
 
 ---
 
-## BookMapOrderFlowStudies → rockit-core + rockit-pipeline
+## BookMapOrderFlowStudies → rockit-core
 
-### Strategy Logic → `packages/rockit-core/src/rockit_core/strategies/`
+### Strategies → `packages/rockit-core/src/rockit_core/strategies/`
 
-The existing repo has 16 strategies inheriting from `StrategyBase`. All move to core:
+Source: `BookMapOrderFlowStudies/strategy/`
 
-| Current File | New File | Strategy |
-|-------------|----------|----------|
-| `strategy/base.py` | `strategies/base.py` | `StrategyBase` — "strategies emit signals, never manage positions" |
-| `strategy/signal.py` | `strategies/signal.py` | `Signal` dataclass (timestamp, direction, entry/stop/target, confidence, metadata) |
-| `strategy/day_type.py` | `strategies/day_type.py` | Dalton day type classification (SUPER_TREND, TREND, P_DAY, B_DAY, NEUTRAL) |
-| `strategy/day_confidence.py` | `strategies/day_confidence.py` | `DayTypeConfidenceScorer` — real-time probability estimates |
-| `strategy/__init__.py` | `strategies/__init__.py` | Registry + `CORE_STRATEGIES` portfolio definition |
-| `strategy/trend_bull.py` | `strategies/trend_bull.py` | `TrendDayBull` — VWAP pullback, IBH acceptance, OF quality gates |
-| `strategy/trend_bear.py` | `strategies/trend_bear.py` | `TrendDayBear` — mirror of bull |
-| `strategy/super_trend_bull.py` | `strategies/super_trend_bull.py` | `SuperTrendBull` — >2x IB extension |
-| `strategy/super_trend_bear.py` | `strategies/super_trend_bear.py` | `SuperTrendBear` — mirror |
-| `strategy/p_day.py` | `strategies/p_day.py` | `PDayStrategy` — skewed balance, 0.5–1.0x extension |
-| `strategy/b_day.py` | `strategies/b_day.py` | `BDayStrategy` — IBL fade on narrow days |
-| `strategy/neutral_day.py` | `strategies/neutral_day.py` | `NeutralDayStrategy` — range trading |
-| `strategy/pm_morph.py` | `strategies/pm_morph.py` | `PMMorphStrategy` — PM session morphs |
-| `strategy/morph_to_trend.py` | `strategies/morph_to_trend.py` | `MorphToTrendStrategy` — intra-session morph detection |
-| `strategy/edge_fade.py` | `strategies/edge_fade.py` | `EdgeFadeStrategy` — mean reversion from lower IB edge, 58.1% WR, PF 1.75 |
-| `strategy/bear_accept.py` | `strategies/bear_accept.py` | `BearAcceptShort` — acceptance below IBL |
-| `strategy/ibh_sweep.py` | `strategies/ibh_sweep.py` | `IBHSweepFail` — fade failed IBH breakouts |
-| `strategy/or_reversal.py` | `strategies/or_reversal.py` | `OpeningRangeReversal` — ICT Judas Swing, 80% WR in 62 sessions |
-| `strategy/or_acceptance.py` | `strategies/or_acceptance.py` | `ORAcceptanceStrategy` — OR acceptance continuation |
-| `strategy/ib_retest.py` | `strategies/ib_retest.py` | `IBRetestStrategy` — IB level retest entries |
-| `strategy/balance_signal.py` | `strategies/balance_signal.py` | `BalanceSignal` — balance/consolidation detection |
-| `strategy/eighty_percent_rule.py` | `strategies/eighty_percent_rule.py` | 80% Rule — VA mean reversion (v1/v2/v3 research) |
+| Current File | Strategy Class | LOC | Notes |
+|-------------|---------------|-----|-------|
+| `base.py` | `StrategyBase` | 81 | Abstract base — "emit signals, never manage positions" |
+| `signal.py` | `Signal` | 46 | Dataclass: timestamp, direction, entry/stop/target, confidence, metadata |
+| `day_type.py` | `DayType` enum, `TrendStrength` enum | 139 | SUPER_TREND/TREND/P_DAY/B_DAY/NEUTRAL + classify functions |
+| `day_confidence.py` | `DayTypeConfidenceScorer` | 332 | Real-time day type probability scorer |
+| `__init__.py` | Registry | 86 | `ALL_STRATEGIES`, `CORE_STRATEGIES`, `RESEARCH_STRATEGIES` |
+| **Dalton Core (9)** | | | |
+| `trend_bull.py` | `TrendDayBull` | 363 | VWAP pullback, IBH acceptance, OF quality gates |
+| `trend_bear.py` | `TrendDayBear` | 289 | Mirror of bull — **disabled on NQ** |
+| `super_trend_bull.py` | `SuperTrendBull` | 199 | >2x IB extension, multiple pyramids |
+| `super_trend_bear.py` | `SuperTrendBear` | 193 | Mirror — **disabled on NQ** |
+| `p_day.py` | `PDayStrategy` | 230 | Skewed balance, 80% success from IB boundary |
+| `b_day.py` | `BDayStrategy` | 182 | IBL fade on narrow days — IBH fade **disabled** |
+| `neutral_day.py` | `NeutralDayStrategy` | 38 | Pass — no trading |
+| `pm_morph.py` | `PMMorphStrategy` | 170 | PM session morph (min 15 pts beyond AM range) |
+| `morph_to_trend.py` | `MorphToTrendStrategy` | 122 | Balance → trend transition (min 30 pts beyond IB) |
+| **Research (6)** | | | |
+| `orb_enhanced.py` | `ORBEnhanced` | 581 | Opening Range Breakout with advanced filters |
+| `orb_vwap_breakout.py` | `ORBVwapBreakout` | 220 | ORB + VWAP confluence |
+| `ema_trend_follow.py` | `EMATrendFollow` | 273 | EMA20/50 trend following |
+| `liquidity_sweep.py` | `LiquiditySweep` | 311 | Liquidity sweep reversal entries |
+| `eighty_percent_rule.py` | `EightyPercentRule` | 265 | 80% rule VA mean reversion |
+| `mean_reversion_vwap.py` | `MeanReversionVWAP` | 255 | VWAP mean reversion scalping |
+
+**Total: 20 files, ~4,375 LOC**
+
+### Backtest Engine → `packages/rockit-core/src/rockit_core/engine/`
+
+Source: `BookMapOrderFlowStudies/engine/`
+
+| Current File | Class | LOC | Purpose |
+|-------------|-------|-----|---------|
+| `backtest.py` | `BacktestEngine` | ~800 | Bar-by-bar orchestrator: IB computation → day type → session context → signal → filter → execute |
+| `execution.py` | `ExecutionModel` | ~120 | Slippage (1 tick/side), commission ($2.05/contract NQ), position sizing |
+| `position.py` | `PositionManager`, `OpenPosition` | ~220 | Position tracking, trailing stops (BE, R-multiple, session extreme), daily loss limit |
+| `trade.py` | `Trade` | ~80 | Completed trade dataclass with cost accounting |
+| `equity.py` | `EquityCurve` | ~75 | Equity curve tracking, max drawdown |
+
+**Total: 5 files, ~1,295 LOC**
 
 ### Filter Chain → `packages/rockit-core/src/rockit_core/filters/`
 
-| Current File | New File | Purpose |
+Source: `BookMapOrderFlowStudies/filters/`
+
+| Current File | Class(es) | Purpose |
 |-------------|----------|---------|
-| `filters/composite.py` | `filters/composite.py` | `CompositeFilter` — chains all filters, signal must pass ALL |
-| `filters/order_flow_filter.py` | `filters/order_flow.py` | Delta, CVD, imbalance thresholds |
-| `filters/strategy_regime_filter.py` | `filters/regime.py` | Regime-specific gates |
-| `filters/time_filter.py` | `filters/time.py` | Session time windows |
-| `filters/trend_filter.py` | `filters/trend.py` | Trend alignment |
-| `filters/volatility_filter.py` | `filters/volatility.py` | Volatility regime gates |
+| `base.py` | `FilterBase` | Abstract base: `should_trade(signal, bar, session_context) -> bool` |
+| `composite.py` | `CompositeFilter` | Chains multiple filters with AND logic |
+| `order_flow_filter.py` | `DeltaFilter`, `CVDFilter`, `VolumeFilter` | Order flow thresholds |
+| `regime_filter.py` | `RegimeFilter` | Market regime classification gates |
+| `time_filter.py` | `TimeFilter` | Session time window restriction |
+| `trend_filter.py` | `TrendFilter` | Trend alignment confirmation |
+| `volatility_filter.py` | `VolatilityFilter` | ATR/volatility regime gates |
 
-### Data Models & Features → `packages/rockit-core/src/rockit_core/data/`
+**Total: 7 files**
 
-| Current File | New File | Purpose |
-|-------------|----------|---------|
-| `data/loader.py` | `data/loader.py` | CSV loader for NinjaTrader volumetric exports (OHLCV + vol_ask/bid/delta + indicators) |
-| `data/features.py` | `data/features.py` | Feature engineering: `compute_order_flow_features()`, `compute_ib_features()`, `compute_day_type()`, `add_ict_features()` |
-| `data/session.py` | `data/session.py` | Session grouping utilities |
-| `indicators/ict_models.py` | `indicators/ict.py` | FVG, IFVG, BPR detection |
-| `profile/volume_profile.py` | `indicators/volume_profile.py` | Volume profile computation |
-| `profile/tpo_profile.py` | `indicators/tpo.py` | TPO market profile |
+### Indicators → `packages/rockit-core/src/rockit_core/indicators/`
 
-### Configuration → `configs/`
+Source: `BookMapOrderFlowStudies/indicators/`
 
-| Current File | New File | Purpose |
-|-------------|----------|---------|
-| `config/constants.py` | `configs/constants.yaml` | Session times, thresholds, risk defaults ($150K account, $4K max DD, $400 risk/trade) |
-| `config/instruments.py` | `configs/instruments.yaml` | NQ ($20/pt), MNQ ($2/pt), ES ($50/pt), MES ($5/pt), YM, MYM with tick sizes and commissions |
+| Current File | Purpose | LOC |
+|-------------|---------|-----|
+| `technical.py` | EMA, VWAP, ATR, RSI computation | ~130 |
+| `ict_models.py` | FVG, IFVG, BPR, MSS, CSS, OTE detection | ~380 |
+| `smt_divergence.py` | Smart Money Theory divergence (NQ vs ES/YM) | ~310 |
+| `ib_width.py` | Initial Balance width analysis | ~310 |
+| `value_area.py` | Value area computation (70% rule) | ~350 |
 
-### Backtest Engine → `packages/rockit-pipeline/src/rockit_pipeline/backtest/`
+**Total: 5 files, ~1,480 LOC**
 
-| Current File | New File | Purpose |
-|-------------|----------|---------|
-| `engine/backtest.py` | `backtest/engine.py` | Unified bar-by-bar backtest (IB computation → day type → session context → signal → filter → execute) |
-| `engine/execution.py` | `backtest/execution.py` | Slippage (1 tick/side), commission ($2.05/contract NQ), position sizing |
-| `engine/position.py` | `backtest/position.py` | Open position tracking, trailing stops (BE activation, R-multiple, session extreme), risk limits |
-| `engine/trade.py` | `backtest/trade.py` | Completed trade dataclass with full cost accounting |
-| `engine/equity.py` | `backtest/equity.py` | Equity curve tracking |
-| `reporting/metrics.py` | `evaluation/metrics.py` | Win rate, profit factor, expectancy, drawdown, Sharpe |
-| `reporting/trade_log.py` | `evaluation/trade_log.py` | CSV export of trade log |
+### Market Profile → `packages/rockit-core/src/rockit_core/profile/`
 
-### Prop Firm Pipeline → `packages/rockit-pipeline/src/rockit_pipeline/prop/`
+Source: `BookMapOrderFlowStudies/profile/`
 
-| Current File | New File | Purpose |
-|-------------|----------|---------|
-| `prop/pipeline.py` | `prop/pipeline.py` | `PropPipeline` — multi-account simulation (eval → funded → scale to 5 accounts) |
-| `prop/account.py` | `prop/account.py` | `PropAccount` — evaluation/funded lifecycle |
-| `prop/sizer.py` | `prop/sizer.py` | `PropSizer` — setup-grade-based position sizing |
-| `prop/rules.py` | `prop/rules.py` | Prop firm rules (eval targets, max drawdown) |
+| Current File | Purpose |
+|-------------|---------|
+| `volume_profile.py` | POC, VAH, VAL, HVN/LVN computation |
+| `tpo_profile.py` | TPO letters, profile shape, fattening zones |
+| `dpoc_migration.py` | DPOC movement tracking through session |
+| `ib_analysis.py` | IB-specific metrics and analysis |
+| `confluences.py` | Level confluence detection |
+| `wick_parade.py` | Wick parade (extreme rejection analysis) |
 
-### Diagnostics → `packages/rockit-pipeline/src/rockit_pipeline/diagnostics/`
+**Total: 6 files**
 
-| Current | New | Purpose |
-|---------|-----|---------|
-| `diagnostics/` (20+ scripts) | `diagnostics/` | Trade quality, entry models, OF analysis, day type validation |
-| `scripts/` | `scripts/` | Backtest runners, diagnostic scripts, analysis tools |
+### Data Loading → `packages/rockit-core/src/rockit_core/data/`
+
+Source: `BookMapOrderFlowStudies/data/`
+
+| Current File | Purpose |
+|-------------|---------|
+| `loader.py` | CSV loader for NinjaTrader volumetric exports (OHLCV + vol_ask/bid/delta + indicators) |
+| `features.py` | Feature engineering: OF features, IB features, day type, ICT features |
+| `session.py` | Session grouping and date-based filtering utilities |
+
+**Total: 3 files**
+
+### Reporting → `packages/rockit-core/src/rockit_core/reporting/`
+
+Source: `BookMapOrderFlowStudies/reporting/`
+
+| Current File | Purpose |
+|-------------|---------|
+| `metrics.py` | Win rate, profit factor, expectancy, max drawdown, Sharpe ratio |
+| `trade_log.py` | CSV/JSON export of trade log |
+| `day_analyzer.py` | Per-session analysis |
+| `comparison.py` | Cross-strategy comparison (by day type, setup type, time window) |
+
+**Total: 4 files**
+
+### Config → `packages/rockit-core/src/rockit_core/config/`
+
+Source: `BookMapOrderFlowStudies/config/`
+
+| Current File | Purpose |
+|-------------|---------|
+| `constants.py` (72 LOC) | Session times (RTH 9:30-16:00), IB params (60 bars), day type thresholds, risk defaults ($2K max daily loss, 30 max contracts) |
+| `instruments.py` (42 LOC) | `InstrumentSpec` dataclass: NQ ($20/pt, $5/tick), MNQ ($2/pt), ES ($50/pt), MES ($5/pt), YM, MYM |
+
+**Total: 2 files, 114 LOC**
 
 ---
 
-## BookMapOrderFlowStudies (NinjaTrader) → rockit-clients
+## rockit-framework (standalone) → rockit-core deterministic
 
-### Current NinjaTrader Code (Complex — 500+ lines each)
+### Deterministic Modules → `packages/rockit-core/src/rockit_core/deterministic/`
 
-| Current File | What It Does |
-|-------------|-------------|
-| `DualOrderFlow_Evaluation.cs` | Full strategy logic in C#: OF feature computation, percentile calculation, signal generation, position management. 31 contracts, $1500 daily loss, 10:00-13:00 ET. |
-| `DualOrderFlow_Funded.cs` | Same + 5-minute HTF filter layer. 20 contracts, $800 daily loss. Multi-timeframe CVD alignment + VWAP context. |
-| `export/ninjatrader.py` | Python code generator that auto-generates C# from backtest params |
+Source: `rockit-framework/modules/` (38 modules, 9,293 LOC) + `rockit-framework/orchestrator.py` (359 LOC)
 
-### New NinjaTrader Code (Thin — ~200 lines each)
+**Orchestrator:**
+| Current File | Purpose |
+|-------------|---------|
+| `orchestrator.py` (359 LOC) | `generate_snapshot()` — calls all modules in dependency order, merges into single JSON |
 
-| New File | What It Does |
-|----------|-------------|
-| `RockitIndicator.cs` | HTTP client → draws zones/levels/signals from API annotation JSON. No strategy logic. |
-| `RockitStrategy.cs` | HTTP client → reads trade setups from API → places orders at specified prices. No strategy logic. |
+**Core Data Modules:**
+| Module | LOC | Purpose |
+|--------|-----|---------|
+| `loader.py` | 35 | CSV data loading (`load_nq_csv()`) |
+| `premarket.py` | 104 | Asia/London/overnight ranges, compression flag, SMT preopen |
+| `ib_location.py` | 96 | IB placement, price vs IB, technicals, ATR |
+| `volume_profile.py` | 116 | POC/VAH/VAL/HVN/LVN (current + prior sessions) |
+| `tpo_profile.py` | 166 | TPO shape, fattening zones, single prints, poor highs/lows |
+| `dpoc_migration.py` | 167 | 30-min DPOC slices, migration direction/magnitude |
+| `wick_parade.py` | 42 | Bullish/bearish wick counts in 60-min window |
+| `fvg_detection.py` | 137 | Fair Value Gap detection (5/15/1H/90min/daily timeframes) |
+| `ninety_min_pd_arrays.py` | 50 | 90-min premium/discount zones, expansion status |
+| `core_confluences.py` | 146 | Boolean signal merge from all raw modules |
+| `cross_market.py` | 0 | Stub — ES/YM cross-market (future) |
+| `vix_regime.py` | 0 | Stub — VIX regime classification (future) |
 
-**What gets eliminated:** All C# implementations of delta/CVD/imbalance computation, percentile calculation, day type classification, signal logic. All of this runs server-side in Python.
+**Signal Composition Modules:**
+| Module | LOC | Purpose |
+|--------|-----|---------|
+| `inference_engine.py` | ~250 | 8 high-priority deterministic rules (day_type, bias, confidence) |
+| `decision_engine.py` | ~250 | Day type classification rules (Trend/Balance/Open Drive) |
+| `cri.py` | 412 | Contextual Readiness Index (terrain, identity, permission, trap detection) |
+| `dalton.py` | 360 | Trend strength quantification (Weak/Moderate/Strong/Super) |
+
+**Setup Generation Modules:**
+| Module | LOC | Purpose |
+|--------|-----|---------|
+| `playbook_engine.py` | ~300 | 10 fundamental playbooks (setup generation) |
+| `playbook_engine_v2.py` | ~300 | Enhanced playbook version |
+| `balance_classification.py` | ~200 | Balance day specific analysis |
+| `mean_reversion_engine.py` | ~200 | Mean reversion target generation |
+| `or_reversal.py` | ~200 | Opening Range Reversal setup |
+| `edge_fade.py` | ~200 | Edge Fade mean reversion (10:00-13:30) |
+| `va_edge_fade.py` | 334 | VA Edge Fade (poke beyond VA, fail, fade) |
+| `globex_va_analysis.py` | ~200 | 80% Rule (Globex gap rejection) |
+| `twenty_percent_rule.py` | ~200 | 20% IB extension breakout |
+
+**Training/Reasoning Modules:**
+| Module | LOC | Purpose |
+|--------|-----|---------|
+| `enhanced_reasoning.py` | ~200 | 9-step reasoning chain for LLM training output |
+| `cri_psychology_voice.py` | ~150 | Trader voice interpretation |
+| `market_structure_events.py` | ~150 | Market structure event detection |
+| `outcome_labeling.py` | ~150 | Training outcome labels |
+| `intraday_sampling.py` | ~100 | Intraday sampling and smoothing |
+| `setup_annotator.py` | ~100 | Annotation setup |
+
+**Infrastructure Modules:**
+| Module | LOC | Purpose |
+|--------|-----|---------|
+| `config_validator.py` | ~100 | Config validation |
+| `schema_validator.py` | ~100 | Snapshot schema validation |
+| `dataframe_cache.py` | ~100 | DataFrame caching (30% speedup documented) |
+| `error_logger.py` | ~100 | Centralized error logging |
+| `acceptance_test.py` | ~100 | Acceptance test harness |
+
+**Total: 39 files (orchestrator + 38 modules), ~9,652 LOC**
 
 ---
 
-## rockit-framework → rockit-pipeline (deterministic) + rockit-train
+## rockit-framework → rockit-train
 
-### Orchestrator / Snapshot Generation → `packages/rockit-pipeline/src/rockit_pipeline/deterministic/`
+### Training Scripts → `packages/rockit-train/`
 
-| Current Module | New Location | Purpose |
-|---------------|-------------|---------|
-| `orchestrator.py` | `deterministic/orchestrator.py` | `generate_snapshot()` — orchestrates all modules |
-| `modules/loader.py` | Reuse `rockit_core/data/loader.py` | Already in core |
-| `modules/premarket.py` | `deterministic/modules/premarket.py` | London/Asia/overnight levels |
-| `modules/ib_location.py` | Reuse `rockit_core/data/features.py` | IB computation already in core |
-| `modules/wick_parade.py` | `deterministic/modules/wick_parade.py` | Candle wick analysis |
-| `modules/dpoc_migration.py` | `deterministic/modules/dpoc_migration.py` | DPOC migration tracking |
-| `modules/volume_profile.py` | Reuse `rockit_core/indicators/volume_profile.py` | Already in core |
-| `modules/tpo_profile.py` | Reuse `rockit_core/indicators/tpo.py` | Already in core |
-| `modules/ninety_min_pd_arrays.py` | `deterministic/modules/pd_arrays.py` | 90-min price discovery arrays |
-| `modules/fvg_detection.py` | Reuse `rockit_core/indicators/ict.py` | FVG detection already in core |
-| `modules/core_confluences.py` | `deterministic/modules/confluences.py` | Pre-computed confluence signals |
-| `modules/cross_market.py` | `deterministic/modules/cross_market.py` | SMT divergence (ES/YM vs NQ) |
-| `modules/vix_regime.py` | `deterministic/modules/vix_regime.py` | VIX regime classification |
+Source: `rockit-framework/` (root-level scripts)
 
-**Key benefit:** Several modules (IB, volume profile, TPO, FVG) are duplicated between BookMapOrderFlowStudies and rockit-framework today. In the monorepo, they exist once in `rockit-core` and are shared.
-
-### Training Code → `packages/rockit-train/`
-
-Training code from rockit-framework moves to `rockit-train` with MLOps automation layered on top (see [03-pipeline-mlops.md](03-pipeline-mlops.md)).
+| Current File | New Location | Purpose |
+|-------------|-------------|---------|
+| `generate_training_data_with_synthetic_output.py` | `rockit_train/dataset.py` | Synthetic labels from snapshot features (no external LLM needed) |
+| `generate_lora_training_data.py` | `rockit_train/trainer.py` | Full LoRA pipeline: snapshots → LLM → JSONL |
+| `generate_training_data_90days.py` | Absorbed into dataset.py | 90-day batch generation |
+| `train_lora_adapter.py` | `rockit_train/lora.py` | LoRA fine-tuning execution |
+| `validate_training_data.py` | `rockit_train/validation.py` | Training data quality checks |
+| `validate_session_integrity.py` | `rockit_train/validation.py` | Session integrity verification |
+| `config/config.yaml` | `configs/training/base.yaml` | Training configuration |
+| `config/schema.json` | `rockit_core/deterministic/schema.json` | Snapshot validation schema |
 
 ---
 
-## TradingView → rockit-clients
+## rockit-framework → rockit-serve
 
-| Current File | New File | Change |
-|-------------|----------|--------|
-| `tradingview/OR_Reversal_Indicator.pine` | `rockit-clients/tradingview/or_reversal.pine` | Rewrite as API consumer (fetch annotation JSON, draw) |
-| `tradingview/Edge_Fade_Indicator.pine` | `rockit-clients/tradingview/edge_fade.pine` | Rewrite as API consumer |
+### Live Inference → `packages/rockit-serve/`
+
+Source: `rockit-framework/` (root-level scripts)
+
+| Current File | New Location | Purpose |
+|-------------|-------------|---------|
+| `analyze-today.py` (500+ LOC) | `rockit_serve/inference/pipeline.py` | Refactored: no Google Drive download, receives data via API instead |
+| `analyze-today-glm.py` | Absorbed into `llm.py` | GLM variant becomes a model config option |
+| `analyze-today2.py` | Absorbed into `llm.py` | Alternative analyzer becomes a config option |
 
 ---
 
-## RockitAPI → rockit-serve
+## RockitAPI → rockit-serve (absorbed)
 
-Existing API endpoints port into the FastAPI application at `packages/rockit-serve/`. The new API adds the annotation protocol layer on top (see [04-platform-abstraction.md](04-platform-abstraction.md)).
+Source: `RockitAPI/`
+
+| Current File | New Location | Purpose |
+|-------------|-------------|---------|
+| `main.py` (306 LOC) | `rockit_serve/routes/journal.py` | Journal CRUD endpoints preserved |
+| `auth.py` (155 LOC) | `rockit_serve/middleware/auth.py` | JWT authentication reused |
+| `storage.py` (271 LOC) | `rockit_serve/storage.py` | GCS client with checksum verification reused |
+| `models.py` (80 LOC) | `rockit_serve/models/` | Pydantic schemas extended |
+| `config.py` (32 LOC) | `rockit_serve/config.py` | Settings management extended |
+| `Dockerfile` | `rockit_serve/Dockerfile` | Updated for new app |
+| `cloudbuild.yaml` | `infra/cloudbuild/deploy.yaml` | Updated deployment config |
 
 ---
 
-## RockitUI → rockit-clients/dashboard
+## RockitDataFeed → GCS (data migration, not code)
 
-The existing dashboard UI moves into `packages/rockit-clients/dashboard/` with the same tech stack. It now consumes the annotation protocol JSON from rockit-serve.
+Source: `RockitDataFeed/`
+
+| Current Location | GCS Location | File Count |
+|-----------------|-------------|------------|
+| `local-analysis/*.jsonl` | `gs://rockit-data/training/local-analysis/` | 58 files (252 days) |
+| `local-analysis-format/*.jsonl` | `gs://rockit-data/training/local-analysis-format/` | 4 files (2026) |
+| `xai-analysis/*.jsonl` | `gs://rockit-data/training/xai-analysis/` | 43 files (Oct-Dec 2025) |
+
+These are training data files, not code. They get uploaded to GCS and referenced by the training pipeline.
+
+---
+
+## NinjaTrader C# → DISCARD and Rebuild
+
+Source: `BookMapOrderFlowStudies/` (root level)
+
+| Current File | LOC | Action |
+|-------------|-----|--------|
+| `DualOrderFlow_Evaluation.cs` | 397 | **DISCARD** — standalone order flow strategy, zero overlap with Python |
+| `DualOrderFlow_Funded.cs` | 526 | **DISCARD** — same, conservative variant |
+| `output/ninjatrader/DaltonPlaybookStrategy.cs` | ~200 | **DISCARD** — was auto-generated from Python |
+| `export/ninjatrader.py` | ~100 | **DISCARD** — C# code generator no longer needed |
+
+**New files (built from scratch):**
+| New File | LOC | Purpose |
+|----------|-----|---------|
+| `RockitIndicator.cs` | ~150 | HTTP client → draws zones/levels/signals from API annotation JSON |
+| `RockitStrategy.cs` | ~150 | HTTP client → fills trades from API setups, manages stops/trails locally |
+
+---
+
+## TradingView → NEW (nothing exists today)
+
+| New File | LOC | Purpose |
+|----------|-----|---------|
+| `rockit_indicator.pine` | ~100 | Webhook-driven annotation display on TradingView charts |
+
+---
+
+## RockitUI → NEW (only a spec exists)
+
+Source: `RockitUI/prompt/project-design.md` (spec document only)
+
+| New Location | Purpose |
+|-------------|---------|
+| `packages/rockit-clients/dashboard/` | React dashboard consuming annotation API |
+
+---
+
+## Research/Diagnostic Scripts → Archive
+
+Source: `BookMapOrderFlowStudies/` (root level, ~72 files)
+
+These scripts served their research purpose. They are not migrated to the monorepo but can be referenced from the archived repo:
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| `study_*.py` | 23 | `study_balance_day_edge_fade.py`, `study_mfe.py`, `study_va_breakout_continuation.py` |
+| `diagnostic_*.py` | 34 | `diagnostic_bday_quality.py`, `diagnostic_deep_orderflow.py`, `diagnostic_trade_quality.py` |
+| `analyze_*.py` | 15 | `analyze_70wr_optimal.py`, `analyze_gap_fill_80p.py`, `analyze_regime_directional.py` |
 
 ---
 
@@ -169,14 +324,29 @@ The existing dashboard UI moves into `packages/rockit-clients/dashboard/` with t
 
 Code that exists in multiple places today and will exist once in the monorepo:
 
-| Duplicated Logic | Current Locations | Single Location |
-|-----------------|-------------------|-----------------|
-| IB computation | BookMap `data/features.py` + Framework `modules/ib_location.py` + NinjaTrader C# | `rockit-core/data/features.py` |
-| Volume profile | BookMap `profile/volume_profile.py` + Framework `modules/volume_profile.py` | `rockit-core/indicators/volume_profile.py` |
-| TPO profile | BookMap `profile/tpo_profile.py` + Framework `modules/tpo_profile.py` | `rockit-core/indicators/tpo.py` |
-| FVG detection | BookMap `indicators/ict_models.py` + Framework `modules/fvg_detection.py` | `rockit-core/indicators/ict.py` |
-| Day type classification | BookMap `strategy/day_type.py` + NinjaTrader C# inline | `rockit-core/strategies/day_type.py` |
-| Delta/CVD computation | BookMap `data/features.py` + NinjaTrader C# `CalculateOrderFlowFeatures()` | `rockit-core/data/features.py` |
-| Signal logic | BookMap Python strategies + NinjaTrader C# `CheckEntrySignals()` | `rockit-core/strategies/*.py` |
+| Duplicated Logic | Location 1 | Location 2 | Location 3 | Single Location |
+|-----------------|-----------|-----------|-----------|----------------|
+| Volume Profile | BookMap `profile/volume_profile.py` | Framework `modules/volume_profile.py` | — | `rockit-core/profile/volume_profile.py` (shared by engine + orchestrator) |
+| TPO Profile | BookMap `profile/tpo_profile.py` | Framework `modules/tpo_profile.py` | — | `rockit-core/profile/tpo_profile.py` |
+| FVG Detection | BookMap `indicators/ict_models.py` | Framework `modules/fvg_detection.py` | — | `rockit-core/indicators/ict_models.py` |
+| IB Analysis | BookMap `data/features.py` + `profile/ib_analysis.py` | Framework `modules/ib_location.py` | C# inline | `rockit-core/profile/ib_analysis.py` |
+| DPOC Migration | BookMap `profile/dpoc_migration.py` | Framework `modules/dpoc_migration.py` | — | `rockit-core/profile/dpoc_migration.py` |
+| Wick Parade | BookMap `profile/wick_parade.py` | Framework `modules/wick_parade.py` | — | `rockit-core/profile/wick_parade.py` |
+| Day Type | BookMap `strategy/day_type.py` | Framework `modules/decision_engine.py` | C# inline | `rockit-core/strategies/day_type.py` |
+| Delta/CVD | BookMap `data/features.py` | — | C# `CalculateOrderFlowFeatures()` | `rockit-core/data/features.py` |
 
-**Total: 7 major deduplication wins.** Each of these is a source of "backtest doesn't match NinjaTrader" bugs today.
+**Total: 8 deduplication wins.** Each removes a source of "backtest doesn't match live" or "framework output differs from backtest" bugs.
+
+---
+
+## Summary Statistics
+
+| Metric | Count |
+|--------|-------|
+| Files moving to `rockit-core` | ~92 (strategies + engine + filters + indicators + profile + data + config + reporting + deterministic) |
+| Files moving to `rockit-train` | ~8 (training scripts + configs) |
+| Files absorbed into `rockit-serve` | ~7 (RockitAPI) + 3 (analyze-today variants) |
+| Files discarded (C#) | 4 (replaced by ~2 new thin client files) |
+| Files archived (research scripts) | ~72 (stay in old repo) |
+| Data files migrated to GCS | ~105 JSONL files |
+| Net-new code needed | Signals API, Dashboard, Pine Script, thin NinjaTrader client |

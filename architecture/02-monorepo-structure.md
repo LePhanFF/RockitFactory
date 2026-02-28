@@ -1,124 +1,183 @@
 # Monorepo Structure
 
+> **Revision 2** — Updated after local code inspection. Key change: strategies and backtest engine
+> are tightly coupled in the current codebase (strategies depend on `session_context` built by the engine).
+> Rather than forcing a split, `rockit-core` keeps them together as a cohesive research library.
+> The 38 deterministic modules from the standalone rockit-framework are also consolidated here.
+
 ## Repository Layout
 
 ```
 RockitFactory/
 ├── architecture/              # This proposal (living documentation)
 ├── packages/
-│   ├── rockit-core/           # Strategy logic, signals, indicators
+│   ├── rockit-core/           # THE library: strategies + engine + analysis
 │   │   ├── pyproject.toml
 │   │   ├── src/
 │   │   │   └── rockit_core/
 │   │   │       ├── __init__.py
-│   │   │       ├── strategies/
-│   │   │       │   ├── __init__.py        # Registry + CORE_STRATEGIES portfolio
-│   │   │       │   ├── base.py            # StrategyBase — "emit signals, never manage positions"
-│   │   │       │   ├── signal.py          # Signal dataclass (entry/stop/target/direction/confidence)
-│   │   │       │   ├── day_type.py        # Dalton day type (SUPER_TREND/TREND/P_DAY/B_DAY/NEUTRAL)
-│   │   │       │   ├── day_confidence.py  # Real-time day type probability scorer
-│   │   │       │   ├── trend_bull.py      # TrendDayBull — VWAP pullback, IBH acceptance
-│   │   │       │   ├── trend_bear.py      # TrendDayBear — mirror
-│   │   │       │   ├── super_trend_bull.py # SuperTrendBull — >2x IB extension
-│   │   │       │   ├── super_trend_bear.py # SuperTrendBear — mirror
-│   │   │       │   ├── p_day.py           # PDayStrategy — skewed balance 0.5-1.0x
-│   │   │       │   ├── b_day.py           # BDayStrategy — IBL fade narrow days
-│   │   │       │   ├── neutral_day.py     # NeutralDayStrategy — range trading
-│   │   │       │   ├── pm_morph.py        # PMMorphStrategy — PM session morphs
-│   │   │       │   ├── morph_to_trend.py  # MorphToTrendStrategy — intra-session morph
-│   │   │       │   ├── edge_fade.py       # EdgeFadeStrategy — IB edge mean reversion
-│   │   │       │   ├── bear_accept.py     # BearAcceptShort — acceptance below IBL
-│   │   │       │   ├── ibh_sweep.py       # IBHSweepFail — fade failed IBH breakouts
-│   │   │       │   ├── or_reversal.py     # OpeningRangeReversal — ICT Judas Swing
-│   │   │       │   ├── or_acceptance.py   # ORAcceptanceStrategy — OR continuation
-│   │   │       │   ├── ib_retest.py       # IBRetestStrategy — IB level retest
-│   │   │       │   ├── balance_signal.py  # BalanceSignal — consolidation detection
-│   │   │       │   └── eighty_percent.py  # 80% Rule — VA mean reversion
-│   │   │       ├── filters/
+│   │   │       │
+│   │   │       ├── strategies/           # 16 strategies (from BookMapOrderFlowStudies)
+│   │   │       │   ├── __init__.py       # Registry: ALL_STRATEGIES, CORE_STRATEGIES
+│   │   │       │   ├── base.py           # StrategyBase — "emit signals, never manage positions"
+│   │   │       │   ├── signal.py         # Signal dataclass
+│   │   │       │   ├── day_type.py       # DayType enum + TrendStrength + classify_day_type()
+│   │   │       │   ├── day_confidence.py # DayTypeConfidenceScorer
+│   │   │       │   ├── trend_bull.py     # TrendDayBull
+│   │   │       │   ├── trend_bear.py     # TrendDayBear (disabled on NQ)
+│   │   │       │   ├── super_trend_bull.py
+│   │   │       │   ├── super_trend_bear.py  # (disabled on NQ)
+│   │   │       │   ├── p_day.py          # PDayStrategy
+│   │   │       │   ├── b_day.py          # BDayStrategy (IBH fade disabled)
+│   │   │       │   ├── neutral_day.py    # NeutralDayStrategy (pass)
+│   │   │       │   ├── pm_morph.py       # PMMorphStrategy
+│   │   │       │   ├── morph_to_trend.py # MorphToTrendStrategy
+│   │   │       │   ├── orb_enhanced.py   # ORBEnhanced (research, 581 LOC)
+│   │   │       │   ├── orb_vwap_breakout.py
+│   │   │       │   ├── ema_trend_follow.py
+│   │   │       │   ├── liquidity_sweep.py
+│   │   │       │   ├── eighty_percent_rule.py
+│   │   │       │   └── mean_reversion_vwap.py
+│   │   │       │
+│   │   │       ├── engine/               # Backtest engine (from BookMapOrderFlowStudies)
 │   │   │       │   ├── __init__.py
-│   │   │       │   ├── composite.py       # CompositeFilter — signal must pass ALL
-│   │   │       │   ├── order_flow.py      # Delta, CVD, imbalance thresholds
-│   │   │       │   ├── regime.py          # Strategy-regime-specific gates
-│   │   │       │   ├── time.py            # Session time windows
-│   │   │       │   ├── trend.py           # Trend alignment filter
-│   │   │       │   └── volatility.py      # Volatility regime gates
-│   │   │       ├── indicators/
+│   │   │       │   ├── backtest.py       # UnifiedBacktestEngine (bar-by-bar orchestrator)
+│   │   │       │   ├── execution.py      # ExecutionModel (slippage, commission)
+│   │   │       │   ├── position.py       # PositionManager + OpenPosition
+│   │   │       │   ├── trade.py          # Trade dataclass
+│   │   │       │   └── equity.py         # EquityCurve tracking
+│   │   │       │
+│   │   │       ├── filters/              # Signal filter chain
 │   │   │       │   ├── __init__.py
-│   │   │       │   ├── ict.py             # FVG, IFVG, BPR detection
-│   │   │       │   ├── volume_profile.py  # Volume profile computation
-│   │   │       │   └── tpo.py             # TPO market profile
-│   │   │       ├── data/
+│   │   │       │   ├── base.py           # FilterBase abstract class
+│   │   │       │   ├── composite.py      # CompositeFilter (AND chain)
+│   │   │       │   ├── order_flow.py     # DeltaFilter, CVDFilter, VolumeFilter
+│   │   │       │   ├── regime.py         # RegimeFilter
+│   │   │       │   ├── time.py           # TimeFilter
+│   │   │       │   ├── trend.py          # TrendFilter
+│   │   │       │   └── volatility.py     # VolatilityFilter
+│   │   │       │
+│   │   │       ├── indicators/           # Technical indicators
 │   │   │       │   ├── __init__.py
-│   │   │       │   ├── loader.py          # CSV loader (OHLCV + volumetric data)
-│   │   │       │   ├── features.py        # OF features, IB features, day type, ICT
-│   │   │       │   ├── session.py         # Session grouping utilities
-│   │   │       │   └── annotations.py     # Platform-agnostic annotation schema
-│   │   │       └── config/
+│   │   │       │   ├── technical.py      # EMA, VWAP, ATR, RSI
+│   │   │       │   ├── ict_models.py     # FVG, IFVG, BPR, MSS, CSS, OTE
+│   │   │       │   ├── smt_divergence.py # Smart Money Theory divergence
+│   │   │       │   ├── ib_width.py       # Initial Balance width analysis
+│   │   │       │   └── value_area.py     # Value area computation (70% rule)
+│   │   │       │
+│   │   │       ├── profile/              # Market profile utilities
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── volume_profile.py # POC, VAH, VAL, HVN/LVN
+│   │   │       │   ├── tpo_profile.py    # TPO letters, shape, fattening zones
+│   │   │       │   ├── dpoc_migration.py # DPOC movement tracking
+│   │   │       │   ├── ib_analysis.py    # IB-specific analysis
+│   │   │       │   ├── confluences.py    # Level confluence detection
+│   │   │       │   └── wick_parade.py    # Wick parade (extremes analysis)
+│   │   │       │
+│   │   │       ├── deterministic/        # Deterministic analysis (from rockit-framework)
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── orchestrator.py   # generate_snapshot() — merges all modules
+│   │   │       │   ├── modules/          # 38 analysis modules consolidated
+│   │   │       │   │   ├── __init__.py
+│   │   │       │   │   ├── premarket.py          # Asia/London/overnight levels
+│   │   │       │   │   ├── ib_location.py        # IB placement analysis
+│   │   │       │   │   ├── volume_profile.py     # VP for snapshots
+│   │   │       │   │   ├── tpo_profile.py        # TPO for snapshots
+│   │   │       │   │   ├── dpoc_migration.py     # DPOC migration
+│   │   │       │   │   ├── wick_parade.py        # Wick analysis
+│   │   │       │   │   ├── fvg_detection.py      # Multi-TF FVG detection
+│   │   │       │   │   ├── ninety_min_pd_arrays.py
+│   │   │       │   │   ├── core_confluences.py   # Boolean signal confluences
+│   │   │       │   │   ├── cross_market.py       # ES/YM cross-market
+│   │   │       │   │   ├── vix_regime.py         # VIX regime classification
+│   │   │       │   │   ├── inference_engine.py   # 8 deterministic rules
+│   │   │       │   │   ├── decision_engine.py    # Day type classification
+│   │   │       │   │   ├── cri.py                # Contextual Readiness Index (412 LOC)
+│   │   │       │   │   ├── dalton.py             # Trend strength quantification (360 LOC)
+│   │   │       │   │   ├── playbook_engine.py    # 10 playbooks (setup generation)
+│   │   │       │   │   ├── playbook_engine_v2.py # Enhanced playbook
+│   │   │       │   │   ├── balance_classification.py
+│   │   │       │   │   ├── mean_reversion_engine.py
+│   │   │       │   │   ├── or_reversal.py        # OR Reversal setup
+│   │   │       │   │   ├── edge_fade.py          # Edge Fade setup
+│   │   │       │   │   ├── va_edge_fade.py       # VA Edge Fade (334 LOC)
+│   │   │       │   │   ├── globex_va_analysis.py # 80% rule
+│   │   │       │   │   ├── twenty_percent_rule.py # 20% IB extension
+│   │   │       │   │   ├── enhanced_reasoning.py # 9-step reasoning for training
+│   │   │       │   │   ├── cri_psychology_voice.py
+│   │   │       │   │   ├── market_structure_events.py
+│   │   │       │   │   ├── outcome_labeling.py   # Training outcome labels
+│   │   │       │   │   ├── intraday_sampling.py
+│   │   │       │   │   ├── loader.py             # CSV loading for snapshots
+│   │   │       │   │   ├── config_validator.py
+│   │   │       │   │   ├── schema_validator.py
+│   │   │       │   │   ├── dataframe_cache.py    # 30% speedup
+│   │   │       │   │   ├── error_logger.py
+│   │   │       │   │   ├── acceptance_test.py
+│   │   │       │   │   └── setup_annotator.py
+│   │   │       │   └── schema.json       # Snapshot validation schema
+│   │   │       │
+│   │   │       ├── data/                 # Data loading and features
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── loader.py         # CSV loader (NinjaTrader volumetric format)
+│   │   │       │   ├── features.py       # OF features, IB features, day type, ICT
+│   │   │       │   └── session.py        # Session grouping utilities
+│   │   │       │
+│   │   │       ├── reporting/            # Evaluation and reporting
+│   │   │       │   ├── __init__.py
+│   │   │       │   ├── metrics.py        # WR, PF, Sharpe, MDD, expectancy
+│   │   │       │   ├── trade_log.py      # Trade log export
+│   │   │       │   ├── day_analyzer.py   # Per-session analysis
+│   │   │       │   └── comparison.py     # Cross-strategy comparison
+│   │   │       │
+│   │   │       └── config/               # Constants and instrument specs
 │   │   │           ├── __init__.py
-│   │   │           ├── constants.py       # Session times, thresholds, risk defaults
-│   │   │           └── instruments.py     # NQ/MNQ/ES/MES/YM/MYM specs
-│   │   └── tests/
+│   │   │           ├── constants.py      # Session times, thresholds, risk defaults
+│   │   │           └── instruments.py    # NQ/MNQ/ES/MES/YM/MYM specs
+│   │   │
+│   │   └── tests/                        # Unit + integration tests
 │   │
-│   ├── rockit-pipeline/       # Backtesting, evaluation, deterministic data
-│   │   ├── pyproject.toml
-│   │   ├── src/
-│   │   │   └── rockit_pipeline/
-│   │   │       ├── __init__.py
-│   │   │       ├── backtest/
-│   │   │       │   ├── __init__.py
-│   │   │       │   ├── engine.py          # Backtest runner
-│   │   │       │   ├── portfolio.py       # Multi-strategy portfolio
-│   │   │       │   └── metrics.py         # Performance metrics/stats
-│   │   │       ├── evaluation/
-│   │   │       │   ├── __init__.py
-│   │   │       │   ├── session_eval.py    # Per-session evaluation
-│   │   │       │   └── report.py          # Evaluation reports
-│   │   │       ├── deterministic/
-│   │   │       │   ├── __init__.py
-│   │   │       │   ├── generator.py       # Deterministic data gen
-│   │   │       │   ├── annotator.py       # Data annotation
-│   │   │       │   └── benchmark.py       # Benchmarking
-│   │   │       └── data/
-│   │   │           ├── __init__.py
-│   │   │           ├── loaders.py         # Data source loaders
-│   │   │           └── transforms.py      # Data transformations
-│   │   └── tests/
-│   │
-│   ├── rockit-train/          # ML training, LoRA, model management
+│   ├── rockit-train/          # ML training pipeline
 │   │   ├── pyproject.toml
 │   │   ├── src/
 │   │   │   └── rockit_train/
 │   │   │       ├── __init__.py
-│   │   │       ├── dataset.py             # Training dataset builder
-│   │   │       ├── lora_config.py         # LoRA hyperparameters
-│   │   │       ├── trainer.py             # Training orchestrator
-│   │   │       ├── evaluator.py           # Model evaluation
-│   │   │       └── registry.py            # Model version registry
+│   │   │       ├── dataset.py            # JSONL training data builder
+│   │   │       ├── trainer.py            # Training orchestrator (LoRA + full)
+│   │   │       ├── evaluator.py          # Model evaluation gates
+│   │   │       ├── registry.py           # Model version registry
+│   │   │       ├── models/               # Model configurations
+│   │   │       │   ├── qwen_30b.py       # Qwen 30B config
+│   │   │       │   └── qwen_70b.py       # Qwen 70B config
+│   │   │       └── strategies/           # Training strategies
+│   │   │           ├── incremental.py    # Incremental LoRA on new data
+│   │   │           └── full_retrain.py   # Full retrain from scratch
 │   │   ├── configs/
-│   │   │   ├── base.yaml                  # Base training config
-│   │   │   └── experiments/               # Experiment configs
+│   │   │   ├── base.yaml                 # Base training config
+│   │   │   └── experiments/              # Experiment configs
 │   │   └── tests/
 │   │
-│   ├── rockit-serve/          # API, inference, deployment
+│   ├── rockit-serve/          # Signals API (NEW — does not exist today)
 │   │   ├── pyproject.toml
 │   │   ├── Dockerfile
 │   │   ├── src/
 │   │   │   └── rockit_serve/
 │   │   │       ├── __init__.py
-│   │   │       ├── app.py                 # FastAPI application
+│   │   │       ├── app.py                # FastAPI application
 │   │   │       ├── routes/
 │   │   │       │   ├── __init__.py
-│   │   │       │   ├── signals.py         # Live signal endpoints
-│   │   │       │   ├── annotations.py     # Annotation endpoints
-│   │   │       │   ├── setups.py          # Trade setup endpoints
-│   │   │       │   └── health.py          # Health/readiness probes
+│   │   │       │   ├── annotations.py    # Annotation endpoints (chart drawing)
+│   │   │       │   ├── setups.py         # Trade setup endpoints
+│   │   │       │   ├── inference.py      # Deterministic + LLM inference
+│   │   │       │   ├── journal.py        # Journal endpoints (from existing RockitAPI)
+│   │   │       │   └── health.py         # Health/readiness probes
 │   │   │       ├── inference/
 │   │   │       │   ├── __init__.py
-│   │   │       │   ├── deterministic.py   # Rule-based inference
-│   │   │       │   └── llm.py             # LLM-based inference
+│   │   │       │   ├── deterministic.py  # Rule-based from rockit-core
+│   │   │       │   └── llm.py            # LLM-based inference
 │   │   │       └── middleware/
 │   │   │           ├── __init__.py
-│   │   │           └── auth.py            # API authentication
+│   │   │           └── auth.py           # JWT auth (from existing RockitAPI)
 │   │   └── tests/
 │   │
 │   ├── rockit-ingest/         # Live data ingestion
@@ -128,55 +187,52 @@ RockitFactory/
 │   │   │       ├── __init__.py
 │   │   │       ├── collectors/
 │   │   │       │   ├── __init__.py
-│   │   │       │   ├── csv_watcher.py     # Legacy CSV file watcher
-│   │   │       │   ├── gcs_uploader.py    # Direct GCS upload
-│   │   │       │   └── stream.py          # Streaming collector
-│   │   │       ├── processors/
-│   │   │       │   ├── __init__.py
-│   │   │       │   └── normalizer.py      # Data normalization
+│   │   │       │   ├── csv_watcher.py    # Watch for CSV files, upload to GCS
+│   │   │       │   └── api_push.py       # Direct API push
 │   │   │       └── publishers/
 │   │   │           ├── __init__.py
-│   │   │           └── pubsub.py          # Pub/Sub publisher
+│   │   │           └── gcs.py            # GCS upload with retry
 │   │   └── tests/
 │   │
 │   └── rockit-clients/        # Platform-specific thin clients
-│       ├── ninjatrader/
-│       │   ├── RockitIndicator.cs         # Generic API-driven indicator
-│       │   └── RockitStrategy.cs          # Generic API-driven strategy
-│       ├── tradingview/
-│       │   └── rockit_indicator.pine      # Pine Script indicator
-│       └── dashboard/
+│       ├── ninjatrader/       # (FULL REWRITE — current C# is standalone)
+│       │   ├── RockitIndicator.cs    # Draws annotations from API
+│       │   └── RockitStrategy.cs     # Fills trades from API setups
+│       ├── tradingview/       # (NEW — no Pine Script exists today)
+│       │   └── rockit_indicator.pine
+│       └── dashboard/         # (NEW — only a spec exists today)
 │           ├── package.json
 │           ├── Dockerfile
-│           └── src/                       # React/Next.js dashboard
+│           └── src/
 │
-├── infra/                     # Infrastructure as Code
+├── infra/
 │   ├── terraform/
 │   │   ├── main.tf
-│   │   ├── cloud_run.tf                   # API + UI deployment
-│   │   ├── gcs.tf                         # Storage buckets
-│   │   ├── pubsub.tf                      # Pub/Sub topics
-│   │   ├── vertex_ai.tf                   # Training pipelines
+│   │   ├── cloud_run.tf
+│   │   ├── gcs.tf
 │   │   └── variables.tf
 │   ├── docker/
-│   │   └── docker-compose.yaml            # Local dev environment
+│   │   └── docker-compose.yaml
 │   └── cloudbuild/
-│       ├── ci.yaml                        # CI pipeline
-│       ├── train.yaml                     # Training pipeline
-│       └── deploy.yaml                    # Deployment pipeline
+│       ├── ci.yaml
+│       ├── train.yaml
+│       └── deploy.yaml
 │
 ├── configs/
-│   ├── strategies.yaml                    # Strategy configuration
-│   ├── instruments.yaml                   # Instrument definitions
-│   └── sessions.yaml                      # Session schedules
+│   ├── strategies.yaml        # Strategy configuration
+│   ├── instruments.yaml       # Instrument definitions
+│   ├── training/              # Training configs per model
+│   │   ├── qwen-30b.yaml
+│   │   └── qwen-70b.yaml
+│   └── snapshot-schema.json   # Deterministic snapshot validation
 │
 ├── scripts/
-│   ├── setup.sh                           # Dev environment setup
-│   ├── backtest.sh                        # Run backtests locally
-│   └── train.sh                           # Kick off training
+│   ├── setup.sh
+│   ├── backtest.sh
+│   └── train.sh
 │
 ├── pyproject.toml             # Root workspace config
-├── Makefile                   # Common commands
+├── Makefile
 └── README.md
 ```
 
@@ -185,26 +241,32 @@ RockitFactory/
 ## Package Dependency Graph
 
 ```
-rockit-core          (zero dependencies on other rockit packages)
+rockit-core          (ZERO dependencies on other rockit packages)
+    │                 Contains: strategies, engine, filters, indicators,
+    │                 profile, deterministic modules, reporting, config
+    │                 THIS is the publishable research library
     │
-    ├──▶ rockit-pipeline     (depends on core)
-    │        │
-    │        └──▶ rockit-train    (depends on core + pipeline)
+    ├──▶ rockit-train       (depends on core — uses deterministic modules)
     │
-    ├──▶ rockit-serve        (depends on core + pipeline + train)
+    ├──▶ rockit-serve       (depends on core + train — serves inference)
     │
-    ├──▶ rockit-ingest       (depends on core)
+    ├──▶ rockit-ingest      (depends on core — data normalization)
     │
-    └──▶ rockit-clients      (API consumers only — no Python dependency)
+    └──▶ rockit-clients     (API consumers only — no Python dependency)
+         ├── ninjatrader/   (C# HTTP client)
+         ├── tradingview/   (Pine Script HTTP client)
+         └── dashboard/     (React/JS HTTP client)
 ```
 
-**Key rule:** `rockit-core` has zero internal dependencies. It's a pure library of strategy logic, data models, and indicators. Everything else depends on it, never the reverse.
+**Why strategies + engine + deterministic modules are together in core:**
+In the current codebase, strategies depend on `session_context` which is built by the backtest engine. The engine imports strategies, filters, indicators, and profile modules. The deterministic orchestrator imports many of the same indicators and profile modules. Splitting these into separate packages would require significant interface redesign with no real benefit. Keeping them together means:
+- `rockit-core` is a self-contained research library you can `pip install`
+- Backtest, strategy evaluation, and deterministic snapshot generation all work from the same import
+- Other packages (train, serve) just `import rockit_core` and use what they need
 
 ---
 
 ## Workspace Management
-
-Use Python workspace tooling to manage the monorepo:
 
 ```toml
 # Root pyproject.toml
@@ -215,7 +277,6 @@ requires-python = ">=3.11"
 [tool.uv.workspace]
 members = [
     "packages/rockit-core",
-    "packages/rockit-pipeline",
     "packages/rockit-train",
     "packages/rockit-serve",
     "packages/rockit-ingest",
@@ -223,7 +284,6 @@ members = [
 
 [tool.uv.sources]
 rockit-core = { workspace = true }
-rockit-pipeline = { workspace = true }
 rockit-train = { workspace = true }
 ```
 
@@ -231,13 +291,28 @@ Each package has its own `pyproject.toml` declaring only its specific dependenci
 
 ---
 
-## What Moves Where (from current repos)
+## What Moves Where
 
-| Current Location | New Location | Notes |
-|-----------------|-------------|-------|
-| BookMapOrderFlowStudies (Python strategies) | `packages/rockit-core/src/rockit_core/strategies/` | Canonical strategy logic |
-| BookMapOrderFlowStudies (NinjaTrader C#) | `packages/rockit-clients/ninjatrader/` | Rewritten as thin API client |
-| rockit-framework (deterministic data gen) | `packages/rockit-pipeline/src/rockit_pipeline/deterministic/` | Data generation |
-| rockit-framework (training code) | `packages/rockit-train/` | Training orchestration |
-| RockitAPI | `packages/rockit-serve/` | API serving |
-| RockitUI | `packages/rockit-clients/dashboard/` | Dashboard UI |
+| Source | Destination | Status |
+|--------|------------|--------|
+| BookMapOrderFlowStudies `strategy/` (16 strategies) | `rockit-core/strategies/` | Move as-is |
+| BookMapOrderFlowStudies `engine/` (5 files) | `rockit-core/engine/` | Move as-is |
+| BookMapOrderFlowStudies `filters/` (7 files) | `rockit-core/filters/` | Move as-is |
+| BookMapOrderFlowStudies `indicators/` (5 files) | `rockit-core/indicators/` | Move as-is |
+| BookMapOrderFlowStudies `profile/` (6 files) | `rockit-core/profile/` | Move as-is |
+| BookMapOrderFlowStudies `data/` (3 files) | `rockit-core/data/` | Move as-is |
+| BookMapOrderFlowStudies `config/` (2 files) | `rockit-core/config/` | Move as-is |
+| BookMapOrderFlowStudies `reporting/` (4 files) | `rockit-core/reporting/` | Move as-is |
+| rockit-framework `orchestrator.py` + 38 modules | `rockit-core/deterministic/` | Move from standalone repo, deduplicate shared modules |
+| rockit-framework training scripts (3 generators) | `rockit-train/` | Move + wrap with MLOps |
+| rockit-framework `analyze-today.py` | `rockit-serve/inference/` | Refactor into API endpoints |
+| RockitAPI auth + journal endpoints | `rockit-serve/routes/journal.py` | Absorb into new API |
+| RockitDataFeed JSONL files | GCS bucket (archived) | Data, not code |
+| NinjaTrader C# (2 files, 923 LOC) | **DISCARD** — replaced by thin client | Full rewrite |
+| RockitUI spec | `rockit-clients/dashboard/` | Build from scratch |
+| Pine Script | `rockit-clients/tradingview/` | Build from scratch (none exists) |
+
+### What Gets Discarded
+- BookMapOrderFlowStudies `rockit-framework/` subdirectory (older copy, 12 modules — superseded by standalone 38-module version)
+- ~72 research/diagnostic scripts — archive for reference, don't migrate (they served their research purpose)
+- `DualOrderFlow_Evaluation.cs` and `DualOrderFlow_Funded.cs` — replaced entirely by thin API client

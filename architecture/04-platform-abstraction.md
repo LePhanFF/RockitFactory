@@ -1,37 +1,63 @@
 # Platform Abstraction Layer
 
-## The Problem
+> **Revision 2** — Updated after inspecting actual C# code and confirming no Pine Script exists.
+> Key corrections:
+> - Current NinjaTrader C# (923 LOC) is 100% standalone order flow — zero overlap with Python strategies
+> - This is a **full rewrite**, not a port. The old C# gets discarded entirely
+> - No Pine Script exists in any repo — TradingView client is net-new development
+> - Annotation schema now based on actual deterministic snapshot structure from rockit-framework
 
-Today, strategy logic is duplicated:
-- **Python** — research, backtesting, data generation
-- **C# (NinjaTrader)** — indicators and execution strategies
-- **Results don't match** — two implementations inevitably diverge
+## The Problem (Confirmed by Code Inspection)
 
-Every research tweak requires manual C# translation, which is the single biggest source of churn.
+The current NinjaTrader C# code (`DualOrderFlow_Evaluation.cs` and `DualOrderFlow_Funded.cs`) implements its own:
+- Delta/CVD computation from raw order flow
+- Imbalance percentile calculation
+- Volume spike detection (1.5x multiplier)
+- Signal generation (delta threshold 85, imbalance threshold 85)
+- Position management (31 contracts, $1,500 daily loss limit)
+- ATR-based exits (0.4x stop, 2.0x reward)
+
+**None of this overlaps with the Python strategies.** The Python side has 16 strategies based on Dalton day types (TrendBull, PDay, BDay, etc.), while the C# does pure order flow signal detection. They are completely different trading approaches that happen to live in the same project.
+
+This means:
+- Backtest results (Python) literally cannot match NinjaTrader results (C#) — they're different strategies
+- Any Python strategy tweak has no effect on NinjaTrader — and vice versa
+- The C# code is essentially a separate trading system
 
 ---
 
-## The Solution: Annotation Protocol
+## The Solution: API-Driven Thin Clients
 
-Instead of reimplementing strategy logic on each platform, we define a **universal annotation protocol**. The Python server computes everything and returns platform-agnostic drawing instructions. Clients become thin renderers.
+Replace all client-side strategy logic with thin clients that consume the Rockit API. The API provides two things:
+
+1. **Annotations** — What to draw on the chart (zones, levels, signals)
+2. **Trade Setups** — What trades to take (entry, stop, targets, trail rules)
+
+The client's job: draw the annotations, fill the trades, manage execution locally.
 
 ```
 ┌──────────────┐     HTTP/WebSocket      ┌──────────────────┐
 │  rockit-serve │◀─────────────────────── │ NinjaTrader      │
-│  (Python)     │ ─────────────────────▶  │ (thin C# client) │
-│               │   Annotation JSON       │ Draws boxes/lines│
-│  Computes:    │                         └──────────────────┘
-│  - Signals    │
-│  - Zones      │     HTTP/WebSocket      ┌──────────────────┐
-│  - Levels     │◀─────────────────────── │ TradingView      │
-│  - Setups     │ ─────────────────────▶  │ (Pine Script)    │
-│               │   Annotation JSON       │ Draws boxes/lines│
+│  (Python API) │ ─────────────────────▶  │ (thin C# client) │
+│               │   Annotations +         │                  │
+│  Computes:    │   Trade Setups          │ Draws zones/lines│
+│  - 38 det.   │                         │ Fills entries     │
+│    modules    │                         │ Manages stops     │
+│  - LLM infer │                         │ Trails targets    │
+│  - Signals   │                         └──────────────────┘
+│  - Setups    │
+│               │     HTTP/WebSocket      ┌──────────────────┐
+│               │◀─────────────────────── │ TradingView      │
+│               │ ─────────────────────▶  │ (Pine Script)    │
+│               │   Annotations           │ Draws zones/lines│
 │               │                         └──────────────────┘
 │               │
 │               │     HTTP                 ┌──────────────────┐
 │               │◀─────────────────────── │ Dashboard UI     │
 │               │ ─────────────────────▶  │ (React)          │
-│               │   Annotation JSON       │ Renders charts   │
+│               │   Annotations +         │ Renders charts   │
+│               │   Trade Setups +        │ Shows analysis   │
+│               │   LLM Commentary        │                  │
 └──────────────┘                          └──────────────────┘
 ```
 
@@ -39,121 +65,146 @@ Instead of reimplementing strategy logic on each platform, we define a **univers
 
 ## Annotation Schema
 
-All visual elements (zones, levels, signals) are expressed as annotations:
+Based on the actual deterministic snapshot structure from rockit-framework (38 modules), the annotation protocol encodes what the snapshot produces into drawing instructions:
 
 ```json
 {
-  "instrument": "ES",
-  "session": "2024-01-15_RTH",
-  "timestamp": "2024-01-15T10:30:00-05:00",
+  "instrument": "NQ",
+  "session": "2025-01-02",
+  "timestamp": "2025-01-02T11:45:00-05:00",
+  "deterministic_summary": {
+    "day_type": "P-Day (Bullish)",
+    "bias": "Long",
+    "confidence": 72,
+    "trend_strength": "Moderate",
+    "cri_status": "GREEN_LIGHT",
+    "matched_playbook": "IB_Extension_Long"
+  },
   "annotations": [
     {
       "type": "zone",
-      "id": "vah-2024-01-15",
-      "label": "VAH",
-      "category": "volume_profile",
-      "top": 4825.50,
-      "bottom": 4823.25,
-      "time_start": "2024-01-15T09:30:00-05:00",
-      "time_end": null,
-      "style": {
-        "color": "#4A90D9",
-        "opacity": 0.3,
-        "border": "solid"
-      }
+      "id": "ib-range",
+      "label": "IB Range",
+      "category": "initial_balance",
+      "top": 22275.0,
+      "bottom": 22257.25,
+      "time_start": "2025-01-02T09:30:00-05:00",
+      "time_end": "2025-01-02T10:30:00-05:00",
+      "style": { "color": "#4A90D9", "opacity": 0.15, "border": "solid" }
     },
     {
       "type": "level",
-      "id": "poc-2024-01-15",
+      "id": "poc-current",
       "label": "POC",
       "category": "volume_profile",
-      "price": 4824.00,
-      "time_start": "2024-01-15T09:30:00-05:00",
-      "time_end": null,
-      "style": {
-        "color": "#E74C3C",
-        "width": 2,
-        "dash": "solid"
-      }
+      "price": 22723.0,
+      "time_start": "2025-01-02T09:30:00-05:00",
+      "style": { "color": "#E74C3C", "width": 2, "dash": "solid" }
+    },
+    {
+      "type": "level",
+      "id": "vah-current",
+      "label": "VAH",
+      "category": "volume_profile",
+      "price": 22750.0,
+      "time_start": "2025-01-02T09:30:00-05:00",
+      "style": { "color": "#3498DB", "width": 1, "dash": "dashed" }
+    },
+    {
+      "type": "level",
+      "id": "val-current",
+      "label": "VAL",
+      "category": "volume_profile",
+      "price": 22700.0,
+      "time_start": "2025-01-02T09:30:00-05:00",
+      "style": { "color": "#3498DB", "width": 1, "dash": "dashed" }
+    },
+    {
+      "type": "level",
+      "id": "dpoc-current",
+      "label": "DPOC",
+      "category": "dpoc_migration",
+      "price": 22262.5,
+      "time_start": "2025-01-02T09:30:00-05:00",
+      "style": { "color": "#F39C12", "width": 2, "dash": "solid" },
+      "metadata": { "migration_direction": "down", "steps_since_1030": 137.75 }
+    },
+    {
+      "type": "zone",
+      "id": "fvg-1h-001",
+      "label": "1H FVG (Bull)",
+      "category": "fvg",
+      "top": 22702.75,
+      "bottom": 22638.0,
+      "time_start": "2025-01-02T09:00:00-05:00",
+      "style": { "color": "#2ECC71", "opacity": 0.2, "border": "dashed" }
+    },
+    {
+      "type": "level",
+      "id": "asia-high",
+      "label": "Asia High",
+      "category": "premarket",
+      "price": 22310.75,
+      "time_start": "2025-01-02T09:30:00-05:00",
+      "style": { "color": "#9B59B6", "width": 1, "dash": "dotted" }
+    },
+    {
+      "type": "level",
+      "id": "london-high",
+      "label": "London High",
+      "category": "premarket",
+      "price": 22336.5,
+      "time_start": "2025-01-02T09:30:00-05:00",
+      "style": { "color": "#9B59B6", "width": 1, "dash": "dotted" }
     },
     {
       "type": "signal",
       "id": "entry-long-001",
-      "label": "Long Entry",
+      "label": "Long Entry (TrendBull)",
       "category": "trade_setup",
-      "price": 4823.50,
-      "time": "2024-01-15T10:30:00-05:00",
+      "price": 22265.0,
+      "time": "2025-01-02T11:45:00-05:00",
       "direction": "long",
       "metadata": {
-        "strategy": "dalton_auction",
+        "strategy": "TrendBull",
         "confidence": 0.82,
-        "stop": 4820.00,
-        "target_1": 4828.00,
-        "target_2": 4832.00,
-        "risk_reward": 2.5
-      }
-    },
-    {
-      "type": "zone",
-      "id": "fvg-001",
-      "label": "FVG",
-      "category": "fvg",
-      "top": 4826.00,
-      "bottom": 4824.50,
-      "time_start": "2024-01-15T10:15:00-05:00",
-      "time_end": "2024-01-15T10:45:00-05:00",
-      "style": {
-        "color": "#2ECC71",
-        "opacity": 0.2,
-        "border": "dashed"
-      }
-    },
-    {
-      "type": "zone",
-      "id": "bpr-001",
-      "label": "BPR",
-      "category": "bpr",
-      "top": 4827.25,
-      "bottom": 4825.75,
-      "time_start": "2024-01-15T09:45:00-05:00",
-      "time_end": null,
-      "style": {
-        "color": "#9B59B6",
-        "opacity": 0.25,
-        "border": "solid"
+        "day_type": "P-Day",
+        "playbook": "IB_Extension_Long"
       }
     }
   ],
   "trade_setups": [
     {
       "id": "setup-001",
-      "strategy": "dalton_auction",
+      "strategy": "TrendBull",
       "direction": "long",
       "status": "active",
       "entry": {
-        "price": 4823.50,
+        "price": 22265.0,
         "type": "limit",
-        "time": "2024-01-15T10:30:00-05:00"
+        "time": "2025-01-02T11:45:00-05:00"
       },
       "stop": {
-        "price": 4820.00,
+        "price": 22250.0,
         "type": "stop_market"
       },
       "targets": [
-        {"price": 4828.00, "quantity_pct": 50, "label": "T1"},
-        {"price": 4832.00, "quantity_pct": 50, "label": "T2"}
+        { "price": 22290.0, "quantity_pct": 50, "label": "T1" },
+        { "price": 22320.0, "quantity_pct": 50, "label": "T2" }
       ],
       "trail": {
         "type": "step",
-        "trigger_price": 4828.00,
-        "trail_offset": 2.00
+        "trigger_price": 22290.0,
+        "trail_offset": 5.0
       },
       "source": "deterministic",
-      "llm_commentary": "Volume profile shows excess at VAH with..."
+      "llm_commentary": "Bullish P-Day developing. DPOC migrating up, IB accepted above prior VAH..."
     }
   ]
 }
 ```
+
+**Key: the API provides instructions.** Entry price, stop price, targets, trail rules. The client fills the order, sets the stop, manages the trail. The API does not manage the position — the client does.
 
 ---
 
@@ -161,180 +212,225 @@ All visual elements (zones, levels, signals) are expressed as annotations:
 
 ```
 GET  /api/v1/annotations/{instrument}?session={date}
-     → Returns all annotations for a session
+     → All annotations for a session (historical or current)
 
 WSS  /api/v1/stream/{instrument}
-     → WebSocket stream of real-time annotations as they're computed
+     → Real-time annotation stream (push on each new computation)
 
 GET  /api/v1/setups/{instrument}?status=active
-     → Returns active trade setups
+     → Active trade setups with entry/stop/target/trail
 
 GET  /api/v1/setups/{instrument}/{setup_id}
-     → Returns specific setup with full detail
+     → Specific setup detail
 
-POST /api/v1/setups/{setup_id}/execute
-     → Acknowledge execution (for tracking)
+GET  /api/v1/analysis/{instrument}?session={date}
+     → Full deterministic + LLM analysis for a session
+
+POST /api/v1/ingest
+     → Receive new market data (from rockit-ingest)
 ```
 
 ---
 
-## NinjaTrader Client (Thin C# Indicator)
+## NinjaTrader Client (Full Rewrite — ~300 lines total)
 
-The NinjaTrader indicator becomes a simple HTTP client that draws annotations:
+The current `DualOrderFlow_Evaluation.cs` (397 LOC) and `DualOrderFlow_Funded.cs` (526 LOC) are **discarded entirely**. They implement standalone order flow logic that has nothing to do with the Python strategies.
+
+The new client is two simple files:
+
+### RockitIndicator.cs — Draws annotations from API
 
 ```csharp
 // packages/rockit-clients/ninjatrader/RockitIndicator.cs
 public class RockitIndicator : NinjaTrader.NinjaScript.Indicators.Indicator
 {
-    private string apiUrl = "https://rockit-api.run.app";
-    private HttpClient client = new HttpClient();
+    [NinjaScriptProperty]
+    public string ApiUrl { get; set; } = "https://rockit-api.run.app";
+
+    private HttpClient client;
     private List<Annotation> annotations = new List<Annotation>();
+    private DateTime lastRefresh = DateTime.MinValue;
+
+    protected override void OnStateChange()
+    {
+        if (State == State.SetDefaults)
+        {
+            Name = "Rockit Signals";
+            IsOverlay = true;
+        }
+        else if (State == State.Configure)
+        {
+            client = new HttpClient();
+            client.DefaultRequestHeaders.Add("Authorization", "Bearer " + ApiKey);
+        }
+    }
 
     protected override void OnBarUpdate()
     {
         if (CurrentBar < 1) return;
-        if (IsFirstTickOfBar)
+
+        // Refresh annotations every N seconds
+        if ((DateTime.Now - lastRefresh).TotalSeconds > RefreshIntervalSeconds)
         {
-            // Fetch annotations from API
             RefreshAnnotations();
+            lastRefresh = DateTime.Now;
         }
 
-        // Draw all annotations
         foreach (var ann in annotations)
         {
             switch (ann.Type)
             {
                 case "zone":
-                    DrawZone(ann);
+                    Draw.Rectangle(this, ann.Id, false,
+                        ann.TimeStart, ann.Top,
+                        ann.TimeEnd ?? DateTime.Now, ann.Bottom,
+                        Brushes.Transparent,
+                        ColorFromHex(ann.Style.Color),
+                        (int)(ann.Style.Opacity * 100));
                     break;
+
                 case "level":
-                    DrawLevel(ann);
+                    Draw.HorizontalLine(this, ann.Id,
+                        ann.Price,
+                        ColorFromHex(ann.Style.Color),
+                        DashStyleFromString(ann.Style.Dash),
+                        ann.Style.Width);
                     break;
+
                 case "signal":
-                    DrawSignal(ann);
+                    if (ann.Direction == "long")
+                        Draw.ArrowUp(this, ann.Id, false, ann.Time, ann.Price, Brushes.Green);
+                    else
+                        Draw.ArrowDown(this, ann.Id, false, ann.Time, ann.Price, Brushes.Red);
                     break;
             }
         }
     }
-
-    private void DrawZone(Annotation ann)
-    {
-        Draw.Rectangle(this, ann.Id, false,
-            TimeFromString(ann.TimeStart), ann.Top,
-            TimeFromString(ann.TimeEnd ?? DateTime.Now.ToString()),
-            ann.Bottom,
-            ColorFromHex(ann.Style.Color),
-            ColorFromHex(ann.Style.Color),
-            (int)(ann.Style.Opacity * 100));
-    }
-
-    private void DrawLevel(Annotation ann)
-    {
-        Draw.HorizontalLine(this, ann.Id,
-            ann.Price,
-            ColorFromHex(ann.Style.Color),
-            DashStyleFromString(ann.Style.Dash),
-            ann.Style.Width);
-    }
-
-    private void DrawSignal(Annotation ann)
-    {
-        Draw.ArrowUp(this, ann.Id,
-            false,
-            TimeFromString(ann.Time),
-            ann.Price,
-            ColorFromHex(ann.Direction == "long" ? "#2ECC71" : "#E74C3C"));
-    }
 }
 ```
+
+### RockitStrategy.cs — Fills trades from API setups
 
 ```csharp
 // packages/rockit-clients/ninjatrader/RockitStrategy.cs
 public class RockitStrategy : NinjaTrader.NinjaScript.Strategies.Strategy
 {
-    private HttpClient client = new HttpClient();
+    [NinjaScriptProperty]
+    public string ApiUrl { get; set; } = "https://rockit-api.run.app";
+
+    private HttpClient client;
 
     protected override void OnBarUpdate()
     {
+        // Only act when flat — API manages setup lifecycle
         if (Position.MarketPosition == MarketPosition.Flat)
         {
-            // Poll for active trade setups
             var setup = GetActiveSetup();
-            if (setup != null)
+            if (setup != null && setup.Status == "active")
             {
                 ExecuteSetup(setup);
             }
-        }
-        else
-        {
-            // Manage open position (trail stops, targets)
-            ManagePosition();
         }
     }
 
     private void ExecuteSetup(TradeSetup setup)
     {
+        // Place entry at the price API specifies
         if (setup.Direction == "long")
         {
-            EnterLongLimit(setup.Entry.Price, setup.Label);
-            SetStopLoss(CalculationMode.Price, setup.Stop.Price);
-            foreach (var target in setup.Targets)
+            EnterLongLimit(0, true, setup.Contracts, setup.Entry.Price, "RockitEntry");
+        }
+        else
+        {
+            EnterShortLimit(0, true, setup.Contracts, setup.Entry.Price, "RockitEntry");
+        }
+
+        // Set stop at the price API specifies
+        SetStopLoss("RockitEntry", CalculationMode.Price, setup.Stop.Price, false);
+
+        // Set targets at the prices API specifies
+        foreach (var target in setup.Targets)
+        {
+            SetProfitTarget("RockitEntry", CalculationMode.Price, target.Price);
+        }
+    }
+
+    // Client manages trail locally using rules from API
+    protected override void OnPositionUpdate(...)
+    {
+        if (currentSetup?.Trail != null)
+        {
+            // Trail stop per API instructions
+            if (Close[0] >= currentSetup.Trail.TriggerPrice)
             {
-                SetProfitTarget(CalculationMode.Price, target.Price);
+                SetStopLoss("RockitEntry", CalculationMode.Price,
+                    Close[0] - currentSetup.Trail.TrailOffset, false);
             }
         }
-        // ... similar for short
     }
 }
 ```
 
-**Key insight:** The C# code is ~200 lines total. It draws boxes, lines, and arrows. It places orders at prices the API tells it. No strategy logic whatsoever. This client rarely needs to change.
+**Key insight:** ~300 lines total replaces 923 lines. No strategy logic, no order flow computation, no signal detection. The client draws what the API says and fills trades at the prices the API provides. The client handles local execution mechanics (order placement, stop management, trailing) because those need to be responsive to local market data.
 
 ---
 
-## TradingView Client (Pine Script)
+## TradingView Client (New — Nothing Exists Today)
+
+No Pine Script exists in any current repo. This is built from scratch:
 
 ```pine
 // packages/rockit-clients/tradingview/rockit_indicator.pine
 //@version=5
-indicator("Rockit Signals", overlay=true)
+indicator("Rockit Signals", overlay=true, max_lines_count=500, max_boxes_count=500)
 
-// TradingView webhook integration
-// Annotations fetched via TradingView's external data feature
-// or displayed via alert-driven webhook updates
-
-// Zone drawing
-drawZone(top, bottom, startTime, color, opacity) =>
-    box.new(startTime, top, time, bottom,
-            border_color=color, bgcolor=color.new(color, 100-opacity))
-
-// Level drawing
-drawLevel(price, color, style) =>
-    line.new(bar_index[50], price, bar_index, price,
-             color=color, style=style, width=2)
+// TradingView cannot make HTTP calls directly.
+// Two integration options:
+//
+// Option A: Webhook alerts from rockit-serve push to TradingView
+//   - Server sends alerts via TradingView webhook API
+//   - Pine Script displays alert-driven annotations
+//
+// Option B: External data bridge
+//   - Lightweight bridge service fetches from rockit-serve
+//   - Publishes to TradingView data feed
+//   - Pine Script reads from custom data feed
+//
+// For MVP, use Option A (webhook-driven alerts displayed as labels/lines)
 ```
+
+TradingView's API limitations mean this client will be simpler than NinjaTrader — primarily visual annotations via webhook alerts, without trade execution capability.
 
 ---
 
-## What This Eliminates
+## What Gets Eliminated
 
-| Before | After |
-|--------|-------|
-| Maintain strategy logic in Python AND C# | Strategy logic only in Python |
-| NinjaTrader performance != backtest | Same computation, NinjaTrader just renders |
-| Days to translate new strategy to C# | Zero translation — API delivers results |
-| Platform-specific bugs | One implementation, tested once |
-| Adding TradingView means new implementation | Add thin Pine Script client (< 100 lines) |
+| Before (Actual Code Today) | After |
+|---------------------------|-------|
+| 923 LOC of standalone C# order flow strategy logic | ~300 LOC thin API client |
+| C# implements its own delta/CVD/imbalance (zero Python overlap) | All computation in Python API |
+| NinjaTrader results have nothing to do with backtest results | Same computation, NinjaTrader just renders + executes |
+| No TradingView indicators at all | Thin Pine Script client via webhooks |
+| No dashboard (only a spec document) | React dashboard consuming same API |
+| Adding a new platform = rewrite strategies | Adding a new platform = write a thin HTTP client |
 
 ---
 
 ## Latency Considerations
 
-For live trading, latency matters. The annotation protocol supports two modes:
+For the annotation/visualization use case, 1-5 second polling is fine.
 
-1. **Polling** (simple, ~1s latency): Client polls `GET /annotations` every second
-2. **WebSocket** (real-time, ~50ms latency): Client connects to `WSS /stream` for push updates
+For trade execution, latency matters more:
 
-For NinjaTrader execution strategies where milliseconds matter, the WebSocket mode ensures signals arrive with minimal delay. The computation happens server-side and is pushed immediately.
+| Mode | Latency | Use Case |
+|------|---------|----------|
+| Polling (GET /setups) | 1-5s | Adequate for most setups (entries aren't time-critical to the millisecond) |
+| WebSocket (WSS /stream) | 50-200ms | Better for fast-moving markets |
+| Local cache + periodic refresh | <10ms locally, 1-5s stale | Best for NinjaTrader execution |
 
-For most indicator/visualization use cases, 1-second polling is more than adequate.
+**Cloud Run cold start risk:** First request after idle can take 1-3 seconds. Mitigate with:
+- Minimum instances = 1 (keeps one instance warm)
+- Client-side caching of last-known annotations
+- Fallback: if API unreachable, NinjaTrader continues with cached annotations (no new trades, existing positions managed locally)
+
+**Important:** The API provides trade *instructions* (entry at price X, stop at Y). The client decides when and how to fill. If the market moves past the entry price, the client can choose not to fill — that's local execution logic, not API logic.
