@@ -15,9 +15,7 @@ See `architecture/` for the full proposal:
 - `05-data-ingestion.md` — Replacing CSV/Google Drive with GCS/API push
 - `06-migration-plan.md` — 6-phase migration with validation gates
 - `07-code-mapping.md` — File-by-file mapping from actual repo contents
-- `08-self-learning.md` — Self-learning reflection loop, daily/multi-day review cycles, A/B testing, version control for agent behavior
-- `09-agent-dashboard.md` — Agent monitoring dashboard for ops visibility into debates, signals, performance, and self-learning
-- `10-backtest-and-training.md` — Multi-agent backtesting (90-day replay), LoRA training strategy, agentic framework (LangGraph)
+- `08-agent-system.md` — Complete agent architecture: LangGraph graph, Advocate/Skeptic/Orchestrator, self-learning loop, A/B testing, agent dashboard, multi-agent backtesting, structured retrieval
 - `11-testing-and-automation.md` — Testing pyramid (unit/integration/agent/live), baseline performance system, automated MLOps retraining pipeline, Claude Code as autonomous developer
 - `12-deployment.md` — Deployment architecture: Docker Compose (not Kubernetes), agents as LangGraph nodes (not containers), environment configs (dev/prod/cloud)
 

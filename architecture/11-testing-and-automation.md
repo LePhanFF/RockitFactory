@@ -2,7 +2,22 @@
 
 ## Overview
 
-Four layers of testing, a baseline system to know if you're improving, and a fully automated MLOps pipeline that minimizes human interaction. Claude Code can be the human-in-the-loop for code changes.
+Four layers of testing, a baseline system to know if you're improving, a 6-layer evaluation framework (Design Principle #5), and a fully automated MLOps pipeline that minimizes human interaction. Claude Code can be the human-in-the-loop for code changes.
+
+### 6-Layer Evaluation Framework (Design Principle #5)
+
+Every layer of the system emits metrics to DuckDB. No change ships without measurable comparison:
+
+| Layer | What | Example Metric | When |
+|-------|------|---------------|------|
+| 1. Component | Module-level output | FVG detection precision, CRI score distribution | Phase 1 |
+| 2. Strategy | Per-strategy trading | Win rate, PF, expectancy per strategy | Phase 1 |
+| 3. Data Quality | Schema compliance | Snapshot field coverage, schema validation pass rate | Phase 1 |
+| 4. LLM Quality | Model accuracy | Day type accuracy pre/post training | Phase 4 |
+| 5. Agent Quality | Agent value-added | Consensus override accuracy, skeptic save rate | Phase 5 |
+| 6. System | End-to-end trading | Net P&L, Sharpe, rolling drawdown | Phase 5 |
+
+See [roadmap/10-evaluation.md](../roadmap/10-evaluation.md) for implementation timeline.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

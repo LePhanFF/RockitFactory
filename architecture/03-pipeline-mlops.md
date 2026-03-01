@@ -1,8 +1,10 @@
 # Pipeline & MLOps Design
 
-> **Revision 2** — Updated with actual training pipeline details from rockit-framework inspection.
-> Key addition: addresses the hard problem of continuously updating LLMs with new strategies,
-> incremental vs full retraining, and multi-model support (Qwen 30B, 70B, etc).
+> **Revision 3** — Updated tool stack based on 2025-2026 research.
+> Key changes: W&B over MLflow, Unsloth/Axolotl for training, bf16 LoRA for MoE models,
+> AWQ+Marlin quantization, vLLM multi-LoRA serving, SGLang as alternative.
+> See `technical-design/12-training-mlops.md` for full implementation specifications.
+> See `technical-design/13-automation-infrastructure.md` for CI/CD, scheduling, monitoring.
 
 ## Pipeline Overview
 
@@ -164,7 +166,23 @@ This is the most critical and complex piece. The challenge:
 | New/modified strategy | **Regenerate + Incremental** | After strategy code changes merge to main |
 | New base model (Qwen 30B → 70B) | **Full retrain** | When switching model architecture |
 | Label quality improvement | **Full retrain** | When annotation approach changes fundamentally |
-| Hyperparameter tuning | **Experiment run** | Ad-hoc, tracked in MLflow |
+| Hyperparameter tuning | **Experiment run** | Ad-hoc, tracked in W&B |
+| New HF model evaluation | **Full retrain + benchmark** | When promising new model appears on HF |
+
+### Tool Stack (Updated)
+
+| Component | Tool | Notes |
+|-----------|------|-------|
+| Training (single GPU) | **Unsloth** | 2-5x speedup, native Qwen3.5 support |
+| Training (multi-GPU DGX) | **Axolotl** | FSDP/DeepSpeed ZeRO-2, YAML-driven |
+| Experiment tracking | **W&B** (not MLflow) | Free tier, native HF integration, no server to host |
+| Evaluation | **lm-eval-harness** + custom suite | Standard benchmarks + Rockit domain eval |
+| Quantization (serving) | **AWQ + Marlin** | 741 tok/s on H100 |
+| Quantization (local) | **GGUF** via llama.cpp | Q4_K_M for Ollama on Mac Mini |
+| Serving (production) | **vLLM** multi-LoRA | Load base once, swap adapters per-request |
+| Serving (alternative) | **SGLang** | 29% faster on H100 with RadixAttention (evaluate Phase 2) |
+
+**Critical MoE note:** Dense models (Qwen3.5-14B, 32B) can use QLoRA 4-bit. MoE models (Qwen3.5-30B-A3B) **must use bf16 LoRA** — QLoRA breaks the router/gate weights. See `technical-design/12-training-mlops.md` §4.4 for details.
 
 ### Training Pipeline (Vertex AI + DGX Hybrid)
 
@@ -259,13 +277,16 @@ Full LoRA fine-tuning from base model
 model:
   name: "qwen-2.5-30b"
   source: "huggingface"
-  quantization: "4bit"   # For DGX memory constraints
+  architecture: "moe"
+  quantization: "bf16"   # MUST be bf16 for MoE — QLoRA breaks router
 training:
   mode: incremental
+  tool: axolotl         # Multi-GPU via Axolotl; single-GPU via Unsloth
   lora:
-    rank: 16
-    alpha: 32
-    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+    rank: 32
+    alpha: 64
+    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    # NOTE: Do NOT include router/gate module — it must stay frozen
   learning_rate: 2e-5
   epochs: 3
   batch_size: 4
@@ -378,6 +399,25 @@ steps:
         --to-tags staging=100
 ```
 
+### Multi-LoRA Serving via vLLM
+
+vLLM loads the base model once and swaps LoRA adapters per-request, enabling:
+- A/B testing different adapter versions without reloading the base model
+- Agent role differentiation (though we use system prompts, not separate adapters)
+- Zero-downtime adapter updates (hot-swap while serving)
+
+```bash
+# Start vLLM with multi-LoRA support
+python -m vllm.entrypoints.openai.api_server \
+    --model Qwen/Qwen3.5-30B-A3B \
+    --enable-lora \
+    --lora-modules production=adapters/v003 candidate=adapters/v004 \
+    --max-loras 4 \
+    --max-lora-rank 64 \
+    --tensor-parallel-size 2 \
+    --quantization marlin  # AWQ + Marlin for 741 tok/s
+```
+
 ### A/B Model Serving
 
 For comparing models (e.g., Qwen 30B vs 70B) in production:
@@ -412,15 +452,17 @@ class MultiModelInference:
 
 ## Experiment Tracking
 
-Use **MLflow** to track all training runs:
+Use **Weights & Biases (W&B)** to track all training runs:
 
 ```python
 # packages/rockit-train/src/rockit_train/trainer.py
-import mlflow
+import wandb
 
 def train(config: TrainConfig):
-    with mlflow.start_run(run_name=f"{config.base_model}-{config.mode.value}"):
-        mlflow.log_params({
+    wandb.init(
+        project="rockit-training",
+        name=f"{config.base_model}-{config.mode.value}",
+        config={
             "base_model": config.base_model,
             "mode": config.mode.value,
             "lora_rank": config.lora_rank,
@@ -429,17 +471,23 @@ def train(config: TrainConfig):
             "dataset": config.dataset_path,
             "prior_adapter": config.prior_adapter,
             "git_sha": get_git_sha(),
-        })
+        },
+    )
 
-        model = run_training(config)
-        metrics = evaluate(model, config)
+    model = run_training(config)  # HF Trainer logs to W&B automatically
+    metrics = evaluate(model, config)
 
-        mlflow.log_metrics(metrics)
-        mlflow.log_artifact(config.dataset_path)
+    wandb.log(metrics)
 
-        if metrics["passes_gate"]:
-            register_model(model, config, metrics)
+    if metrics["passes_gate"]:
+        register_model(model, config, metrics)
+
+    wandb.finish()
 ```
+
+> **Why W&B over MLflow:** Free tier is sufficient (unlimited experiments, 100GB artifacts).
+> Native HF Trainer callback (1-line integration). No tracking server to host/maintain.
+> Built-in hyperparameter sweep. See `technical-design/12-training-mlops.md` §2.2.
 
 ---
 

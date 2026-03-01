@@ -23,6 +23,23 @@ RockitFactory/
 │   │   │       │   ├── signal.py         # Signal dataclass
 │   │   │       │   ├── day_type.py       # DayType enum + TrendStrength + classify_day_type()
 │   │   │       │   ├── day_confidence.py # DayTypeConfidenceScorer
+│   │   │       │   ├── entry_models/     # Composable entry models (ADR-04)
+│   │   │       │   │   ├── __init__.py   # ENTRY_MODELS registry
+│   │   │       │   │   ├── base.py       # EntryModel abstract class
+│   │   │       │   │   ├── unicorn_ict.py
+│   │   │       │   │   ├── orderflow_cvd.py
+│   │   │       │   │   └── smt_divergence.py
+│   │   │       │   ├── stop_models/      # Composable stop models
+│   │   │       │   │   ├── __init__.py   # STOP_MODELS registry
+│   │   │       │   │   ├── base.py       # StopModel abstract class
+│   │   │       │   │   ├── atr_stop.py
+│   │   │       │   │   ├── lvn_hvn.py
+│   │   │       │   │   └── ifvg_stop.py
+│   │   │       │   ├── target_models/    # Composable target/trail models
+│   │   │       │   │   ├── __init__.py   # TARGET_MODELS registry
+│   │   │       │   │   ├── base.py       # TargetModel + TrailRule abstract
+│   │   │       │   │   ├── r_multiple.py
+│   │   │       │   │   └── fvg_trail.py
 │   │   │       │   ├── trend_bull.py     # TrendDayBull
 │   │   │       │   ├── trend_bear.py     # TrendDayBear (disabled on NQ)
 │   │   │       │   ├── super_trend_bull.py

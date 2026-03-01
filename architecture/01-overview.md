@@ -133,8 +133,21 @@ The hardest problem: keeping the LLM current as strategies evolve. The pipeline 
 - **Model flexibility** — swap between Qwen 30B, 70B, or other base models
 - **A/B comparison** — run multiple model versions in parallel to evaluate
 
-### 5. Containerized and Automated
+### 5. Measure Everything, From Day One
+Every layer of the system emits metrics — component-level (did the FVG detection work?), strategy-level (win rate, PF per strategy), data quality (schema compliance, completeness), LLM quality (day type accuracy pre vs post training), agent quality (are agents adding value over raw deterministic signals?), and system-level (net P&L, Sharpe, drawdown). All metrics flow to DuckDB. Evaluation gates block bad changes from reaching production. No change ships without a measurable comparison to the baseline. See the 6-layer evaluation table in [11-testing-and-automation.md](11-testing-and-automation.md).
+
+### 6. Containerized and Automated
 Every component runs in a container. Local development mirrors production. Strategy change → push → pipeline handles backtest, data gen, training, deployment.
+
+### 7. Validated by Industry Precedent
+
+| Our Pattern | Industry Precedent |
+|-------------|-------------------|
+| Advocate/Skeptic consensus | [TradingAgents](https://github.com/TradingAgents) (Columbia U, LangGraph multi-agent trading) |
+| LoRA fine-tuning for finance | [FinGPT / FinLoRA](https://github.com/AI4Finance-Foundation/FinGPT) (Columbia U, validated on stock prediction) |
+| Agent-based trading systems | [FinRL](https://github.com/AI4Finance-Foundation/FinRL) (Columbia U, RL for trading) |
+| Structured retrieval over RAG | Common in financial systems (structured data > embeddings) |
+| Self-learning reflection loop | Novel for trading, standard in ML experiment tracking |
 
 ---
 
@@ -180,14 +193,13 @@ Every component runs in a container. Local development mirrors production. Strat
 
 | Document | Description |
 |----------|-------------|
-| [02-monorepo-structure.md](02-monorepo-structure.md) | Repository layout, package structure, dependency graph |
-| [03-pipeline-mlops.md](03-pipeline-mlops.md) | Pipeline automation, MLOps, training pipeline with incremental/full retrain support |
+| [02-monorepo-structure.md](02-monorepo-structure.md) | Repository layout, package structure, dependency graph, file-by-file code mapping |
+| [03-pipeline-mlops.md](03-pipeline-mlops.md) | Pipeline automation, MLOps, training pipeline with incremental/full retrain, LoRA strategy |
 | [04-platform-abstraction.md](04-platform-abstraction.md) | Annotation protocol, NinjaTrader/TradingView client architecture |
 | [05-data-ingestion.md](05-data-ingestion.md) | Live data ingestion redesign (replacing CSV/Google Drive) |
 | [06-migration-plan.md](06-migration-plan.md) | Phased migration with realistic scope based on actual code |
-| [07-code-mapping.md](07-code-mapping.md) | File-by-file mapping from actual repo contents to monorepo |
-| [08-self-learning.md](08-self-learning.md) | Self-learning reflection loop — daily/multi-day review, A/B testing, versioned agent behavior |
-| [09-agent-dashboard.md](09-agent-dashboard.md) | Agent monitoring dashboard — ops visibility into debates, signals, performance, learning |
-| [10-backtest-and-training.md](10-backtest-and-training.md) | Multi-agent backtesting (90-day replay), LoRA strategy, agentic framework (LangGraph) |
+| [07-code-mapping.md](07-code-mapping.md) | File-by-file mapping from actual repo contents to monorepo (detail appendix) |
+| [08-agent-system.md](08-agent-system.md) | Complete agent architecture: LangGraph, Advocate/Skeptic/Orchestrator, self-learning loop, A/B testing, dashboard, multi-agent backtesting |
 | [11-testing-and-automation.md](11-testing-and-automation.md) | Testing pyramid, baseline performance, automated MLOps retraining, Claude Code as autonomous developer |
 | [12-deployment.md](12-deployment.md) | Deployment architecture: Docker Compose, agents as graph nodes, environment configs |
+| [archive/FAQ-architecture.md](archive/FAQ-architecture.md) | Archived — 16 ADRs now incorporated into the docs above + Design Principle #7 |
