@@ -125,3 +125,4 @@ Every component runs in a container. Local development mirrors cloud deployment.
 | [09-agent-dashboard.md](09-agent-dashboard.md) | Agent monitoring dashboard — ops visibility into debates, signals, performance, learning |
 | [10-backtest-and-training.md](10-backtest-and-training.md) | Multi-agent backtesting (90-day replay), LoRA strategy, agentic framework (LangGraph) |
 | [11-testing-and-automation.md](11-testing-and-automation.md) | Testing pyramid, baseline performance, automated MLOps retraining, Claude Code as autonomous developer |
+| [12-deployment.md](12-deployment.md) | Deployment architecture: Docker Compose, agents as graph nodes, environment configs |

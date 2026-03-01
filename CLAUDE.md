@@ -19,6 +19,7 @@ See `architecture/` for the full proposal:
 - `09-agent-dashboard.md` — Agent monitoring dashboard for ops visibility into debates, signals, performance, and self-learning
 - `10-backtest-and-training.md` — Multi-agent backtesting (90-day replay), LoRA training strategy, agentic framework (LangGraph)
 - `11-testing-and-automation.md` — Testing pyramid (unit/integration/agent/live), baseline performance system, automated MLOps retraining pipeline, Claude Code as autonomous developer
+- `12-deployment.md` — Deployment architecture: Docker Compose (not Kubernetes), agents as LangGraph nodes (not containers), environment configs (dev/prod/cloud)
 
 ### Source Repositories (to be consolidated)
 - **BookMapOrderFlowStudies** — 16 Python strategies (Dalton day types, ICT, order flow), backtest engine, NinjaTrader C# strategies, TradingView Pine Script
