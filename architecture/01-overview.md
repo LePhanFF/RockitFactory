@@ -186,3 +186,8 @@ Every component runs in a container. Local development mirrors production. Strat
 | [05-data-ingestion.md](05-data-ingestion.md) | Live data ingestion redesign (replacing CSV/Google Drive) |
 | [06-migration-plan.md](06-migration-plan.md) | Phased migration with realistic scope based on actual code |
 | [07-code-mapping.md](07-code-mapping.md) | File-by-file mapping from actual repo contents to monorepo |
+| [08-self-learning.md](08-self-learning.md) | Self-learning reflection loop — daily/multi-day review, A/B testing, versioned agent behavior |
+| [09-agent-dashboard.md](09-agent-dashboard.md) | Agent monitoring dashboard — ops visibility into debates, signals, performance, learning |
+| [10-backtest-and-training.md](10-backtest-and-training.md) | Multi-agent backtesting (90-day replay), LoRA strategy, agentic framework (LangGraph) |
+| [11-testing-and-automation.md](11-testing-and-automation.md) | Testing pyramid, baseline performance, automated MLOps retraining, Claude Code as autonomous developer |
+| [12-deployment.md](12-deployment.md) | Deployment architecture: Docker Compose, agents as graph nodes, environment configs |
