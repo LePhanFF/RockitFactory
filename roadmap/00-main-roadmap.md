@@ -8,25 +8,26 @@
 ## Roadmap Overview
 
 ```
-Phase 0 ──► Phase 1 ──► Phase 2 ──► Phase 3 ──► Phase 4 ──► Phase 5 ──► Phase 6
-Foundation   Core Lib    Data        Signals     Training    Agents &     Retire
-                         Ingestion   API         Pipeline    Dashboard    Old Repos
-Week 1-2     Week 2-5    Week 5-6    Week 6-9    Week 8-11   Week 10-14   Week 16+
-                         (parallel)              (parallel)  (parallel)
+Phase 0 ──► Phase 1a ──► Phase 1b ──► Phase 2 ──► Phase 3 ──► Phase 4 ──► Phase 5 ──► Phase 6
+Foundation   Proven       Full         Data        Signals     Training    Agents &     Retire
+             Strategies   Core Lib     Ingestion   API         Pipeline    Dashboard    Old Repos
+Week 1-2     Week 2-4     Week 4-6     Week 5-6    Week 6-9    Week 8-11   Week 10-14   Week 16+
+                                       (parallel)              (parallel)  (parallel)
 ```
 
 ### Phase Dependencies
 
 ```
 Phase 0 (Foundation)
-  └──► Phase 1 (Core Library) ─────────────────────────┐
-         ├──► Phase 2 (Data Ingestion)  [can overlap]   │
-         ├──► Phase 3 (Signals API) ◄───────────────────┘
-         │      └──► Phase 5a (Agent System)
-         │             ├──► Phase 5b (Dashboard)
-         │             └──► Phase 5c (NinjaTrader Client)
-         └──► Phase 4 (Training Pipeline)  [can overlap with Phase 3]
-                └──► Phase 5a (Agent System)  [needs trained model]
+  └──► Phase 1a (Proven Strategies — PRIORITY 1)
+         └──► Phase 1b (Full Core Library) ──────────────┐
+                ├──► Phase 2 (Data Ingestion) [overlap]   │
+                ├──► Phase 3 (Signals API) ◄──────────────┘
+                │      └──► Phase 5a (Agent System)
+                │             ├──► Phase 5b (Dashboard)
+                │             └──► Phase 5c (NinjaTrader Client)
+                └──► Phase 4 (Training Pipeline)  [can overlap with Phase 3]
+                       └──► Phase 5a (Agent System)  [needs trained model]
 
 Phase 6 (Retire Old Repos) ◄── All phases complete + 2 weeks parallel operation
 ```
@@ -38,7 +39,8 @@ Phase 6 (Retire Old Repos) ◄── All phases complete + 2 weeks parallel oper
 | Phase | Name | Goal | Detailed Roadmap | Status |
 |-------|------|------|-----------------|--------|
 | 0 | Foundation | Monorepo skeleton, dev environment, CI | [01-foundation.md](01-foundation.md) | Not started |
-| 1 | Core Library | Migrate strategies + engine + deterministic modules to `rockit-core` | [02-core-library.md](02-core-library.md) | Not started |
+| 1a | **Proven Strategies** | **Migrate proven profitable strategies first: 20% rule, 80% rule, balance day, opening reversal, opening acceptance. Backtest engine + these strategies + supporting filters/indicators.** | [02a-proven-strategies.md](02a-proven-strategies.md) | Not started |
+| 1b | Full Core Library | Migrate remaining strategies, all deterministic modules, entry/stop/target model registry | [02b-core-library.md](02b-core-library.md) | Not started |
 | 2 | Data Ingestion | Replace Google Drive sync with GCS direct upload | [03-data-ingestion.md](03-data-ingestion.md) | Not started |
 | 3 | Signals API | Build `rockit-serve` with annotation + trade setup endpoints | [04-signals-api.md](04-signals-api.md) | Not started |
 | 4 | Training Pipeline | Automated LoRA training with evaluation gates | [05-training-pipeline.md](05-training-pipeline.md) | Not started |
@@ -64,8 +66,10 @@ Phase 6 (Retire Old Repos) ◄── All phases complete + 2 weeks parallel oper
 | Milestone | Validation | Phase |
 |-----------|-----------|-------|
 | `make setup && make test` works | Empty test suite passes, packages importable | Phase 0 |
-| 259-session backtest matches original | Output comparison, zero diff | Phase 1 |
-| Deterministic snapshots match original | Snapshot comparison, zero diff | Phase 1 |
+| Proven strategies backtest validated | 20% rule, 80% rule, balance day, OR, OA produce expected signals | Phase 1a |
+| Backtest engine runs end-to-end | Engine + proven strategies + filters produce trade results | Phase 1a |
+| Full 259-session backtest matches original | Output comparison, zero diff | Phase 1b |
+| Deterministic snapshots match original | Snapshot comparison, zero diff | Phase 1b |
 | CSV → GCS within 5 seconds | Latency measurement during live session | Phase 2 |
 | API returns correct annotations for historical sessions | Integration test suite | Phase 3 |
 | WebSocket streams updates < 1s | Latency measurement | Phase 3 |
@@ -80,7 +84,7 @@ Phase 6 (Retire Old Repos) ◄── All phases complete + 2 weeks parallel oper
 
 ## What This Roadmap Does NOT Cover
 
-- **Individual strategy development** — Adding new strategies (e.g., new entry models) happens continuously after Phase 1. Each strategy follows the YAML-config workflow (see FAQ Q6).
+- **Individual strategy development** — Adding new strategies (e.g., new entry models) happens continuously after Phase 1b. Each strategy follows the lifecycle workflow (see [technical-design/14-strategy-agent-lifecycle.md](../technical-design/14-strategy-agent-lifecycle.md)).
 - **Model experiments** — Trying Qwen 70B, different LoRA ranks, etc. happens after Phase 4. Each experiment is tracked in MLflow.
 - **Prop firm integration** — Future scope, not in this roadmap.
 - **Multi-instrument expansion** — Adding CL, GC, etc. is post-Phase 6.

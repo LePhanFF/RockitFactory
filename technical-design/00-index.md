@@ -58,8 +58,8 @@ Approves or requests changes   ──►    Merges to main
 
 | Doc | Component | Type | Status |
 |-----|-----------|------|--------|
-| [14-agent-graph.md](14-agent-graph.md) | LangGraph, Advocate/Skeptic/Orchestrator nodes | New code | Planned |
-| [15-reflection-pipeline.md](15-reflection-pipeline.md) | Outcome logger, scorecards, reflection, meta-review | New code | Planned |
+| [14-agent-graph.md](14-agent-graph.md) | LangGraph evidence-gathering pipeline: 4 observers (parallel) → Pattern Miner → Advocate/Skeptic debate → Orchestrator decision | New code | Planned |
+| [15-reflection-pipeline.md](15-reflection-pipeline.md) | Outcome logger, scorecards (observer + debate accuracy), reflection, meta-review | New code | Planned |
 
 ### Workflows (Cross-Cutting)
 

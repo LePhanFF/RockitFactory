@@ -450,18 +450,19 @@ You are the [role] agent in the Rockit trading system.
 
 ## Input Format
 You will receive:
-- Deterministic snapshot: [fields]
-- Historian context: [similar sessions]
-- [For Skeptic: Advocate's argument]
-- [For Orchestrator: Both arguments]
+- Evidence cards from 4 observers (profile, momentum, structure, setups)
+- Pattern Miner results (historical match rates, hidden confluence, similar sessions)
+- [For Skeptic: Advocate's argument including admitted/rejected cards]
+- [For Orchestrator: Both arguments + computed confluence from admitted cards]
 
 ## Output Format
 Respond with JSON:
 {
+  "admit": ["card_id_1", ...],         // Advocate/Skeptic: which cards to admit
+  "reject": ["card_id_x", ...],        // Which cards to reject as noise
+  "instinct_cards": [...],             // Own soft observations
   "reasoning": "...",
-  "confidence": 0.0-1.0,
-  "key_factors": ["..."],
-  "decision": "..."  // Orchestrator only: TAKE | SKIP | REDUCE_SIZE
+  "decision": "..."                    // Orchestrator only: TAKE | SKIP | REDUCE_SIZE
 }
 
 ## Guidelines
@@ -473,11 +474,12 @@ Respond with JSON:
 1. **Draft the prompt** following the template above.
 2. **Test against a 10-session sample** — run the agent graph over 10 known historical sessions and review outputs manually.
 3. **Check output quality:**
-   - Does the agent produce valid JSON?
-   - Is the reasoning grounded in the data (not hallucinated)?
-   - Does the confidence correlate with actual outcomes?
-   - [For Skeptic] Does it identify real risks vs generic objections?
-   - [For Orchestrator] Does it weigh both sides or just defer to Advocate?
+   - Does the agent produce valid JSON with valid card IDs?
+   - Is the reasoning grounded in evidence cards (not hallucinated)?
+   - Does the confluence score correlate with actual outcomes?
+   - [For Advocate] Does it build a coherent case connecting evidence across domains?
+   - [For Skeptic] Does it identify genuinely weak evidence vs generic objections?
+   - [For Orchestrator] Does it weigh both sides and cite specific evidence in its decision?
 4. **Version and commit:**
    ```
    configs/agents/prompts/advocate_v01.txt
@@ -505,11 +507,11 @@ Respond with JSON:
 ```
 
 **What Qwen3.5 reflection covers:**
-1. Accuracy review — day type prediction vs actual
-2. Reasoning quality — was Advocate/Skeptic debate sound?
-3. Calibration check — confidence vs actual outcomes
-4. Pattern observations — recurring failure modes, emerging edges
-5. Adjustment proposals — small, specific, testable
+1. Accuracy review — which observers produced the strongest evidence?
+2. Debate quality — did Advocate build a coherent case? Did Skeptic challenge weak evidence? Did Orchestrator weigh both sides?
+3. Calibration check — did confluence score (from admitted evidence cards) correlate with outcomes?
+4. Pattern observations — which evidence combinations are emerging as reliable? What hidden confluence factors from the Pattern Miner proved predictive?
+5. Adjustment proposals — observer weight tweaks, prompt emphasis shifts, pattern miner config
 
 **Tier 1 (Autonomous) — what the system can change on its own:**
 

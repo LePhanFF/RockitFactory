@@ -36,9 +36,21 @@ BookMapOrderFlowStudies                    rockit-framework (standalone)
 │                                          ├── Endpoints: health, login, journal CRUD
 └── NO Pine Script files anywhere          └── Has nothing to do with strategy signals
 
-                                           RockitUI
-                                           └── prompt/project-design.md (spec only)
-                                              NO implementation code
+                                           RockitUI (LePhanFF-RockitUI)
+                                           ├── React 19 + TypeScript + Vite + Tailwind
+                                           │   10,131 LOC across 38 source files
+                                           ├── Dashboard: real-time JSONL viewer from GCS
+                                           │   12 tabs (Brief, Logic, Intraday, DPOC,
+                                           │   Globex, Profile, TPO, Thinking, Coach,
+                                           │   HTF Coach, Rockit Audit, Trade Idea)
+                                           ├── Gemini AI chat (GeminiAudit, ChatPanel)
+                                           ├── Journal (CRUD via RockitAPI)
+                                           ├── Login (JWT auth via RockitAPI)
+                                           ├── Charts (Recharts: DPOC migration, TPO,
+                                           │   price charts, profile visualizer)
+                                           ├── Express server.js (API proxy to Cloud Run)
+                                           ├── Dockerfile (production deployment)
+                                           └── Reads from gs://rockit-data/*.jsonl
 ```
 
 **Pain points (confirmed by code inspection):**
@@ -49,7 +61,7 @@ BookMapOrderFlowStudies                    rockit-framework (standalone)
 
 3. **No signals API exists** — RockitAPI is a trading journal app (login, save/load journal entries). The analysis-serving API that clients would consume doesn't exist yet.
 
-4. **No dashboard exists** — RockitUI is a one-page design spec. No React code.
+4. **Dashboard exists but is standalone** — RockitUI is a 10K LOC React 19 + TypeScript app with 12 analysis tabs, Gemini AI chat, journal integration, and Recharts visualizations. It reads JSONL snapshots directly from GCS and proxies auth through RockitAPI. It is a production-deployed app, not a spec. However, it has no connection to the strategy/agent system being built here — it will need to be adapted to consume the new signals API.
 
 5. **No Pine Script exists** — Despite being mentioned in docs, there are zero `.pine` files in any repo.
 
@@ -158,7 +170,7 @@ Every component runs in a container. Local development mirrors production. Strat
 | 6 repos, 2 divergent rockit-frameworks | 1 monorepo, 1 source of truth |
 | Strategies in Python AND reimplemented in C# | Strategies only in Python, C# draws from API |
 | No signals API (only a journal app) | Full signals API with annotations + trade setups |
-| No dashboard (only a spec) | Dashboard consuming API |
+| Dashboard reads GCS directly, no API integration | Dashboard consuming signals API |
 | No Pine Script | TradingView thin client consuming API |
 | Google Drive CSV sync → local LLM → manual upload | Direct GCS upload → automated pipeline |
 | Manual training on Spark DGX | Automated training with model registry |
@@ -180,7 +192,7 @@ Every component runs in a container. Local development mirrors production. Strat
 | Training data | 252 JSONL files + 4 new-format + 43 xai-format |
 | NinjaTrader C# files | 2 standalone strategies (923 LOC total, zero Python overlap) |
 | TradingView Pine Script | 0 files (does not exist) |
-| RockitUI implementation | 0 files (spec only) |
+| RockitUI implementation | 10,131 LOC, 38 source files (React 19/TypeScript/Vite/Tailwind) |
 | RockitAPI | Journal CRUD app, not a signals API |
 | Backtest engine files | 5 (backtest, execution, position, trade, equity) |
 | Indicator files | 5 (ICT, SMT divergence, technical, IB width, value area) |

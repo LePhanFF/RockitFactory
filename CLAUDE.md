@@ -24,7 +24,7 @@ See `architecture/` for the full proposal:
 - **rockit-framework** (standalone) — 38 deterministic analysis modules (9,293 LOC), orchestrator.py, analyze-today.py (live LLM inference), 3 training data generators. This is the canonical version — an older copy (12 modules) exists inside BookMapOrderFlowStudies.
 - **RockitDataFeed** — 105 JSONL files across 3 formats (local-analysis, local-analysis-format, xai-analysis)
 - **RockitAPI** — FastAPI journal CRUD app (NOT a signals API). JWT auth, GCS storage. To be absorbed into rockit-serve.
-- **RockitUI** — Only a spec document (prompt/project-design.md). No implementation code.
+- **RockitUI** (LePhanFF-RockitUI) — 10,131 LOC React 19 + TypeScript + Vite + Tailwind dashboard. 12 analysis tabs (Brief, Logic, Intraday, DPOC, Globex, Profile, TPO, Thinking, Coach, HTF Coach, Rockit Audit, Trade Idea), Gemini AI chat, journal CRUD (via RockitAPI), Recharts visualizations, JWT auth, Express proxy server, Dockerfile. Reads JSONL snapshots directly from GCS (`gs://rockit-data`). Production-deployed but standalone — no integration with strategy/agent pipeline yet.
 
 ## Domain Context
 - **Trading framework**: Dalton Market Profile / Auction Market Theory
@@ -67,3 +67,4 @@ See `architecture/` for the full proposal:
 - Tests alongside each package: `packages/{name}/tests/`
 - Infrastructure as code in `infra/terraform/`
 - Strategy configs in `configs/`
+- **Local-first development**: All containers run locally via Docker Compose during development. No GCP dependency for dev/iteration — GCP is production only. This means local DuckDB (not Cloud SQL), local filesystem or MinIO (not GCS), local Ollama (not Vertex AI), local API (not Cloud Run). Fast iteration > cloud fidelity.

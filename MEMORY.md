@@ -11,7 +11,7 @@ RockitFactory is a planned monorepo to consolidate the Rockit quantitative tradi
 | rockit-framework | `claude-code-inference-simplification` | orchestrator.py, 12 analysis modules, analyze-today.py (live), back-test.py (batch), LoRA training |
 | RockitDataFeed | `main` | 252 JSONL files (local-analysis/), xAI annotations (xai-analysis/), newer format (local-analysis-format/) |
 | RockitAPI | `main` | GCP Cloud Run API |
-| LePhanFF-RockitUI | `main` | Dashboard UI |
+| LePhanFF-RockitUI | `main` | 10,131 LOC React 19/TS/Vite/Tailwind dashboard. 12 tabs (Brief, Logic, Intraday, DPOC, Globex, Profile, TPO, Thinking, Coach, HTF Coach, Rockit Audit, Trade Idea). Gemini AI chat, journal CRUD via RockitAPI, Recharts charts, JWT auth, Express proxy, Dockerfile. Reads JSONL from GCS. |
 
 ## Key Architecture Insights
 - The 16 strategies all inherit from `StrategyBase` and follow: `on_session_start()` → `on_bar()` → `on_session_end()`. Strategies EMIT signals, backtest engine handles execution.
@@ -28,6 +28,9 @@ RockitFactory is a planned monorepo to consolidate the Rockit quantitative tradi
 - "Any tweak update from research, we have to go through the whole code update in separate repos"
 - Live data via "csv dump into disk every 1 min and then use google drive to sync to cloud"
 
+## Development Preferences
+- **Local-first**: All containers run locally during development (Docker Compose). No GCP dependency for iteration. GCP is production only.
+
 ## Proposed Solution Summary
 1. **Monorepo** with 6 packages: rockit-core, rockit-pipeline, rockit-train, rockit-serve, rockit-ingest, rockit-clients
 2. **Annotation protocol** — NinjaTrader/TradingView become thin renderers consuming API JSON
@@ -38,4 +41,4 @@ RockitFactory is a planned monorepo to consolidate the Rockit quantitative tradi
 ## Session Notes
 - GitHub connector "All repositories" was set but proxy only authorizes RockitFactory in web sessions. User may need to try locally for full repo access.
 - BookMapOrderFlowStudies and RockitDataFeed were accessible via GitHub API (public repos).
-- Private repos (rockit-framework standalone, RockitAPI, RockitUI) were not accessible in this session.
+- Private repos (rockit-framework standalone, RockitAPI) were not accessible in early sessions. RockitUI was reviewed locally — it's a full 10K LOC React app (not a spec).
