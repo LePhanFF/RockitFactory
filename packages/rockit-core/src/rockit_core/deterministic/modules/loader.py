@@ -10,9 +10,8 @@ def load_nq_csv(file_path, session_date):
     """
     df = pd.read_csv(
         file_path,
-        skiprows=1,
         parse_dates=['timestamp'],
-        date_format='%Y-%m-%dT%H:%M:%S.%f'
+        date_format='mixed'
     )
     df.set_index('timestamp', inplace=True)
 

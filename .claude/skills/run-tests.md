@@ -30,8 +30,9 @@ Run pytest for RockitFactory packages.
    - Any lint issues found and fixed
    - If failures: show the failing test names and error messages
 
-## Current Test Inventory (202 tests)
+## Current Test Inventory (249 tests)
 - test_data_manager.py — 11 tests (load, merge, dedup, info)
+- test_deterministic.py — 47 tests (orchestrator integration, 5 classes)
 - test_engine.py — 26 tests (trades, execution, positions, equity)
 - test_strategies.py — 17 tests (day type, signals, confidence)
 - test_strategy_loader.py — 15 tests (registry, loading, config)

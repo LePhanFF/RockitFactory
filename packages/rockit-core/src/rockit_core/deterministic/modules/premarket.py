@@ -39,8 +39,9 @@ def get_premarket(df_nq, df_es=None, df_ym=None, session_date=None):
     on_range = on_high - on_low if not pd.isna(on_high) else float('nan')
 
     # Compression: London/ON ratio
-    compression_flag = bool((london_range / on_range) <= 0.35 if on_range > 0 else False)
-    compression_ratio = round(london_range / on_range, 3) if on_range > 0 else 0.0
+    can_compute_compression = on_range > 0 and not pd.isna(london_range)
+    compression_flag = bool((london_range / on_range) <= 0.35 if can_compute_compression else False)
+    compression_ratio = round(london_range / on_range, 3) if can_compute_compression else 0.0
 
     # Previous day high/low: find the last trading day before current
     all_dates_prev = pd.to_datetime(df_nq['session_date'].unique()).sort_values()

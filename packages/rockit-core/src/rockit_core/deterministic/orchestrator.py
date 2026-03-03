@@ -326,6 +326,9 @@ def generate_snapshot(config):
             })
             snapshot["edge_fade"] = {"error": str(e), "status": "failed"}
 
+        # Clean again after adding inference/CRI/playbook/strategy modules
+        snapshot = clean_for_json(snapshot)
+
         # PHASE 3.5: Full schema validation
         try:
             validate_snapshot(snapshot)
