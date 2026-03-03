@@ -1,0 +1,87 @@
+# Instrument specifications for supported futures contracts.
+# Used by backtest engine, signals API, and position sizing.
+
+instruments:
+  NQ:
+    name: "E-mini NASDAQ 100"
+    exchange: CME
+    point_value: 20.0
+    tick_size: 0.25
+    tick_value: 5.0
+    commission: 2.04
+    slippage_ticks: 1
+    session_hours:
+      rth_start: "09:30"
+      rth_end: "16:00"
+      eth_start: "18:00"
+      eth_end: "17:00"
+
+  MNQ:
+    name: "Micro E-mini NASDAQ 100"
+    exchange: CME
+    point_value: 2.0
+    tick_size: 0.25
+    tick_value: 0.50
+    commission: 0.62
+    slippage_ticks: 1
+    session_hours:
+      rth_start: "09:30"
+      rth_end: "16:00"
+      eth_start: "18:00"
+      eth_end: "17:00"
+
+  ES:
+    name: "E-mini S&P 500"
+    exchange: CME
+    point_value: 50.0
+    tick_size: 0.25
+    tick_value: 12.50
+    commission: 2.04
+    slippage_ticks: 1
+    session_hours:
+      rth_start: "09:30"
+      rth_end: "16:00"
+      eth_start: "18:00"
+      eth_end: "17:00"
+
+  MES:
+    name: "Micro E-mini S&P 500"
+    exchange: CME
+    point_value: 5.0
+    tick_size: 0.25
+    tick_value: 1.25
+    commission: 0.62
+    slippage_ticks: 1
+    session_hours:
+      rth_start: "09:30"
+      rth_end: "16:00"
+      eth_start: "18:00"
+      eth_end: "17:00"
+
+  YM:
+    name: "E-mini Dow"
+    exchange: CBOT
+    point_value: 5.0
+    tick_size: 1.0
+    tick_value: 5.0
+    commission: 2.04
+    slippage_ticks: 1
+    session_hours:
+      rth_start: "09:30"
+      rth_end: "16:00"
+      eth_start: "18:00"
+      eth_end: "17:00"
+
+  MYM:
+    name: "Micro E-mini Dow"
+    exchange: CBOT
+    point_value: 0.50
+    tick_size: 1.0
+    tick_value: 0.50
+    commission: 0.62
+    slippage_ticks: 1
+    session_hours:
+      rth_start: "09:30"
+      rth_end: "16:00"
+      eth_start: "18:00"
+      eth_end: "17:00"
