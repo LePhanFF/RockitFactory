@@ -1,187 +1,278 @@
 ---
 name: generate-training-pairs
 description: Generate LLM training pairs from deterministic snapshots (no API cost)
-allowed-tools: ["Bash", "Read", "Glob", "Grep", "Write", "Edit"]
+allowed-tools: ["Bash", "Read", "Glob", "Grep", "Write", "Edit", "Agent"]
 ---
 
-Generate training pairs for ROCKIT LLM fine-tuning by analyzing deterministic snapshots
-and producing analysis output inline. No external API calls — Claude produces the output
-directly using the shared system prompt as guidance.
+Generate training pairs for ROCKIT LLM fine-tuning by analyzing every deterministic
+snapshot and producing analysis output inline. Uses 3 parallel agents per JSONL file
+to maximize throughput. No external API calls — Claude produces the output directly.
 
 Each training pair is: `{"input": <snapshot>, "output": <analysis_json>}`
 
 ## Usage
-- `/generate-training-pairs` — Process all snapshot days, 4 key times per day
-- `/generate-training-pairs 2026-03-02` — Process a specific date
-- `/generate-training-pairs --all-times` — Process every 5-min snapshot (78/day)
-- `/generate-training-pairs --times 09:30,10:30,12:00,14:00` — Custom time selection
+- `/generate-training-pairs` — Process all snapshot JSONL files found in data/json_snapshots/
+- `/generate-training-pairs 2026-03-02` — Process a single date
+- `/generate-training-pairs --from 2026-02-26 --to 2026-03-03` — Process a date range (inclusive)
 - `/generate-training-pairs --validate` — Validate existing training pairs only
 
-## Default Sample Times
+## Argument Parsing
 
-When no `--all-times` or `--times` flag, use these 4 representative times per day:
-- `09:30` — Market open (minimal data, premarket only)
-- `10:30` — IB complete (first full analysis)
-- `12:00` — Midday (full data, DPOC migration active)
-- `14:00` — Afternoon (mature profile, late-session assessment)
+Parse the user's arguments to determine mode:
+- If `--validate` is present → run validation only (step 5)
+- If `--from` and `--to` are present → filter JSONL files to that date range (inclusive)
+- If a single date like `2026-03-02` is present → process only that date
+- If no arguments → process all JSONL files found
 
 ## Steps
 
 ### 1. Load Reference Materials
 
-Read the system prompt and output schema:
-- `configs/prompts/rockit_system_prompt.md` — The ROCKIT system prompt with strategy stats, time-phase rules, position sizing
-- `configs/prompts/output_schema.json` — JSON schema defining required output fields
+Read these files and internalize them — you ARE the ROCKIT analyst:
+- `configs/prompts/rockit_system_prompt.md` — System prompt with strategy stats, oaths, time-phase rules
+- `configs/prompts/output_schema.json` — JSON schema (13 required fields)
 
-**Internalize these completely.** You ARE the ROCKIT analyst for this task.
+### 2. Build File List
 
-### 2. Find Snapshot Files
-
+Find all snapshot JSONL files:
 ```bash
 ls data/json_snapshots/deterministic_*.jsonl
 ```
 
-If a specific date was given, only process that file. Otherwise process all.
+Filter by argument:
+- **Date range** (`--from X --to Y`): keep files where date >= X and date <= Y
+- **Single date**: keep only that file
+- **No argument**: keep all
 
-### 3. For Each Snapshot File
+Sort files by date ascending. These will be processed **one at a time, sequentially**.
 
-Create output file: `data/training_pairs/training_{date}.jsonl`
+### 3. Process Each JSONL File (one at a time)
 
-For each selected time in the JSONL file:
+For each JSONL file in the sorted list:
 
-#### a. Read the snapshot
-Extract the JSON line matching the target `current_et_time`.
+#### 3a. Determine Pending Times
 
-#### b. Produce the analysis
-Using the system prompt as your guide, produce a JSON analysis object with ALL required fields:
+Check what times already have completed training pairs:
+```python
+import json
+existing = set()
+try:
+    with open(f'data/training_pairs/training_{date}.jsonl', 'r', encoding='utf-8') as f:
+        for line in f:
+            pair = json.loads(line.strip())
+            if pair.get('output') is not None:
+                existing.add(pair['input']['current_et_time'])
+except FileNotFoundError:
+    pass
 
-```json
-{
-  "thinking": {
-    "step_1_context": "...",
-    "step_2_structure": "...",
-    "step_3_flow": "...",
-    "step_4_levels": "...",
-    "step_5_day_type": "...",
-    "step_6_setups": "...",
-    "step_7_risk": "..."
-  },
-  "premarket_read": "...",
-  "or_play": "...",
-  "ib_read": "...",
-  "day_type_call": {
-    "classification": "...",
-    "evidence": [...],
-    "confidence_breakdown": "...",
-    "skew": "...",
-    "morph_watch": "..."
-  },
-  "strategy_assessment": {
-    "or_reversal": "...",
-    "or_acceptance": "...",
-    "eighty_percent": "...",
-    "twenty_percent": "...",
-    "b_day": "...",
-    "edge_fade": "...",
-    "mean_reversion": "..."
-  },
-  "value_area_play": "...",
-  "tpo_remarks": "...",
-  "evolution": "...",
-  "evidence": ["...", "..."],
-  "what_could_go_wrong": ["...", "..."],
-  "one_liner": "...",
-  "discipline": "..."
-}
+# Get all times from snapshot file that still need processing
+pending_times = []
+with open(f'data/json_snapshots/deterministic_{date}.jsonl', 'r', encoding='utf-8') as f:
+    for line in f:
+        snap = json.loads(line)
+        if snap['current_et_time'] not in existing:
+            pending_times.append(snap['current_et_time'])
 ```
 
-**Critical rules when producing output:**
-- Reference EXACT numbers from the snapshot (prices, ranges, percentages)
-- Respect time-phase rules: use `"NA — [reason]"` for sections not yet active
-- day_type_call must be an object (not string) after 10:30, string "NA — ..." before
-- day_type_call.confidence_breakdown must explain which deltas built the confidence score
-- day_type_call.skew must reference balance_classification.skew + skew_strength + seam_level
-- strategy_assessment must check ALL 7 strategy signals, cite WR/PF for each active one
-- Quote strategy WR/PF from the system prompt's strategy table
-- Cite CRI component scores (terrain, breath, reclaim, trap) to explain CRI gate
-- evolution must track: is bias strengthening/weakening? DPOC accelerating/decelerating?
-- Keep one_liner under 25 words
-- Every thinking step must cite specific snapshot numbers
+If no pending times, print "Skipping {date} — all pairs complete" and move to next file.
 
-#### c. Validate the output
-Run validation using the script:
+#### 3b. Split Into 3 Segments
+
+```python
+n = len(pending_times)
+third = n // 3
+seg_a = pending_times[:third]
+seg_b = pending_times[third:2*third]
+seg_c = pending_times[2*third:]
+```
+
+Print: `"Processing {date}: {n} pending snapshots → 3 agents ({len(seg_a)}/{len(seg_b)}/{len(seg_c)})""`
+
+#### 3c. Launch 3 Agents in Parallel
+
+Launch **ALL 3 agents in a single message** so they run concurrently. Use the Agent tool
+with `subagent_type: "general-purpose"` for each.
+
+Each agent writes to its own segment file:
+- Agent A → `data/training_pairs/seg_{date}_A.jsonl`
+- Agent B → `data/training_pairs/seg_{date}_B.jsonl`
+- Agent C → `data/training_pairs/seg_{date}_C.jsonl`
+
+**Agent prompt** (fill in {date}, {segment_label}, {times_csv}, {output_file}):
+
+```
+You are generating ROCKIT LLM training pairs. For each snapshot time assigned to you,
+read the full snapshot, produce an analysis JSON, and write the completed pair to your
+output file.
+
+## Assignment
+- Date: {date}
+- Segment: {segment_label}
+- Times: {times_csv}
+- Output: {output_file}
+
+## Step 1: Read Reference Materials
+Read completely:
+- configs/prompts/rockit_system_prompt.md (system prompt — strategy stats, oaths, time-phase rules)
+- configs/prompts/output_schema.json (13 required fields)
+
+## Step 2: Read Snapshots
+Read data/json_snapshots/deterministic_{date}.jsonl
+
+For quick context on your snapshots, run:
+uv run python scripts/gen_training_batch.py --day {date} --times {times_csv} --output /dev/null --summary-only
+
+Then for each time, extract the FULL snapshot from the JSONL file (you'll need the complete
+data to cite exact numbers).
+
+## Step 3: For EACH Time, Generate Analysis
+
+Produce a JSON object with ALL 13 required fields. Critical rules:
+
+- Reference EXACT numbers from snapshot (prices, ranges, percentages)
+- ALL 7 thinking steps present (use "NA — reason" for inactive time phases)
+- day_type_call: object after 10:30 (classification/evidence/confidence_breakdown/skew/morph_watch), string "NA — IB not complete" before
+- day_type_call.classification MUST match inference.day_type.type from snapshot
+- strategy_assessment: object after 10:00 (or_reversal/or_acceptance/eighty_percent/twenty_percent/b_day/edge_fade/mean_reversion), string "NA — pre-IB" before
+- Strategy stats to cite: OR Rev 64.4%/2.96, OR Accept 59.9%/1.46, 80P 42.3%/1.74, B-Day 46.4%/1.47, Mean Rev 42.6%/0.91 (LOSING — always warn)
+- Cite CRI component scores (terrain, breath, reclaim, trap)
+- one_liner max 140 characters
+- evolution tracks bias strengthening/weakening, DPOC trend
+
+### Time-Phase Rules:
+| Time | Active | Inactive (= "NA — reason") |
+|------|--------|---------------------------|
+| Pre-9:30 | premarket_read, steps 1+4 | Everything else |
+| 9:30-10:00 | + or_play, steps 2+3 | ib_read, day_type_call, strategy_assessment, value_area_play, tpo_remarks, steps 5-7 |
+| 10:00-10:30 | + ib_read, tpo_remarks, strategy_assessment, step 5 | day_type_call object, value_area_play, steps 6-7 |
+| 10:30+ | ALL active | None |
+| After 13:00 | + "No new entries after 13:00" in discipline for 80P/B-Day/Edge Fade | None |
+
+## Step 4: Write Each Pair
+
+After generating analysis for a snapshot, IMMEDIATELY write it as one JSON line:
+
+```python
+import json
+from datetime import datetime
+
+pair = {
+    "input": snapshot,  # full snapshot dict
+    "output": analysis,  # your generated analysis dict
+    "metadata": {
+        "session_date": "{date}",
+        "current_et_time": time_str,
+        "generated_at": datetime.now().isoformat(),
+        "generator": "claude-skill"
+    }
+}
+
+with open("{output_file}", "a", encoding="utf-8") as f:
+    f.write(json.dumps(pair, ensure_ascii=False) + "\n")
+```
+
+Process ALL assigned times. Do not skip any. Write each pair before moving to the next.
+Report how many pairs you wrote when done.
+```
+
+#### 3d. Wait for All 3 Agents to Complete
+
+After all 3 agents return, report their results.
+
+#### 3e. Merge Segment Files
+
+Run this Python to merge segments + existing pairs:
+```python
+import json
+
+date = "{date}"
+pairs_by_time = {}
+
+# Load existing training pairs first
+try:
+    with open(f"data/training_pairs/training_{date}.jsonl", "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            pair = json.loads(line)
+            t = pair["input"]["current_et_time"]
+            if pair.get("output") is not None:
+                pairs_by_time[t] = pair
+except FileNotFoundError:
+    pass
+
+# Load all 3 segments
+for seg in ["A", "B", "C"]:
+    seg_file = f"data/training_pairs/seg_{date}_{seg}.jsonl"
+    try:
+        with open(seg_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                pair = json.loads(line)
+                t = pair["input"]["current_et_time"]
+                if pair.get("output") is not None:
+                    pairs_by_time[t] = pair
+    except FileNotFoundError:
+        print(f"  WARNING: {seg_file} not found")
+
+# Write final file sorted by time
+with open(f"data/training_pairs/training_{date}.jsonl", "w", encoding="utf-8") as f:
+    for t in sorted(pairs_by_time.keys()):
+        f.write(json.dumps(pairs_by_time[t], ensure_ascii=False) + "\n")
+
+print(f"Merged {len(pairs_by_time)} total pairs for {date}")
+```
+
+Clean up segment files:
 ```bash
-# Write the pair, then validate
-uv run python scripts/generate_training_pairs.py --validate-only data/training_pairs/training_{date}.jsonl
+rm -f data/training_pairs/seg_{date}_A.jsonl data/training_pairs/seg_{date}_B.jsonl data/training_pairs/seg_{date}_C.jsonl
 ```
 
-#### d. Write the training pair
-Append one JSON line to the output file:
-```json
-{"input": <snapshot>, "output": <analysis>, "metadata": {"session_date": "...", "current_et_time": "...", "generated_at": "...", "generator": "claude-skill"}}
+#### 3f. Validate This Day
+
+```bash
+uv run python scripts/generate_training_pairs.py --validate data/training_pairs/training_{date}.jsonl
 ```
 
-### 4. Report Results
+Report results for this day, then **proceed to the next JSONL file** in the list.
 
-After processing, report:
-- Number of pairs generated per day
-- Number of validation errors
-- Total pairs generated
-- Output file locations
+### 4. Final Report
 
-## Quality Checklist (per pair)
+After all days are processed, show:
+- Total pairs generated across all days
+- Per-day breakdown (pairs / validation status)
+- Any days that had errors or incomplete segments
 
-- [ ] All 11 required output fields present
-- [ ] thinking steps cite actual numbers from snapshot
-- [ ] Strategy mentions use correct WR/PF (OR Rev: 64.4%/2.96, 80P: 42.3%/1.74, etc.)
-- [ ] Time-phase rules respected (no day_type_call object before 10:30)
-- [ ] day_type_call.classification matches inference.day_type.type from snapshot
-- [ ] CRI status referenced correctly
-- [ ] one_liner is concise (under 20 words)
-- [ ] Mean Reversion VWAP flagged as losing if mentioned
+```bash
+uv run python scripts/generate_training_pairs.py --validate-all
+uv run python scripts/generate_training_pairs.py --stats
+```
 
-## Example Output (10:30 snapshot)
+## Flow Diagram
 
-For a snapshot with: IB range 342.75, day_type "Balance", bias "Bullish", confidence 55, CRI "STAND_DOWN"
+```
+/generate-training-pairs --from 2026-02-26 --to 2026-03-02
 
-```json
-{
-  "thinking": {
-    "step_1_context": "Opened gap down below prior VA (prior VAH 25094.75, VAL 24490.75). Overnight range 146.5pts with ONH 24739.25 well below prior POC 25022.25. Gap fill potential toward prior POC.",
-    "step_2_structure": "IB range 342.75pts — wide IB suggesting responsive activity. Price at upper_third_hug of IB (current 25040.75 vs IBH 24947.75). Extension above IBH confirmed.",
-    "step_3_flow": "DPOC migration data pending (pre-11:05). Wick parade: 22 bullish vs 25 bearish in 60-min window — near neutral, slight bearish edge.",
-    "step_4_levels": "Key levels: IBH 24947.75 (93pts below), prior POC 25022.25 (18pts below), overnight high 24739.25 (301pts below).",
-    "step_5_day_type": "Balance classification with Bullish bias at 55% confidence. Evidence: (1) Wide IB 342.75 = responsive, (2) Extension above IBH but Weak trend strength, (3) day_type_morph locked — no morph detected, (4) Confidence capped by Weak trend.",
-    "step_6_setups": "No active strategy triggers. OR Reversal outside window (9:30-10:15). Edge Fade window not yet open. B-Day balance_type 'neutral' — no probe confirmed.",
-    "step_7_risk": "CRI STAND_DOWN — no new entries. Permission: Flat size, No entry. Bear Trap detected (danger_flags). Discipline: observe only."
-  },
-  "premarket_read": "Opening below prior VA (VAH 25094.75 – VAL 24490.75). Overnight range 146.5pts, ONH 24739.25. Gap down from prior close. Nearest levels: prior POC 25022.25 (18pts), IBH 24947.75 (93pts).",
-  "or_play": "Wide opening drive absorbed 342.75pts of range in IB. No OR Reversal signal triggered. Aggressive buying pushed through overnight levels.",
-  "ib_read": "342.75pt IB — wide range suggesting responsive two-sided trade. Price accepted above IBH (25040.75 vs 24947.75). Inside prior VA range but below prior POC. Wide IB reduces trend day probability.",
-  "day_type_call": {
-    "classification": "Balance",
-    "evidence": [
-      "Wide IB (342.75pts) = responsive activity, not initiative — reduces trend probability",
-      "Weak trend strength despite Bullish bias — market lacks conviction for follow-through",
-      "Confidence only 55% — deterministic engine sees mixed signals",
-      "No day_type_morph detected — structure holding as Balance"
-    ],
-    "skew": "Slight b-skew bullish — extension above IBH but no sustained follow-through. Watch for acceptance below IBH to confirm rotation.",
-    "morph_watch": "A sustained close below IBH 24947.75 with DPOC flattening would confirm Balance. Conversely, new highs above 25045.25 with accelerating DPOC migration could morph to Trend."
-  },
-  "value_area_play": "Price opened below prior VA, rallied back inside. 80P Rule not triggered — would need acceptance confirmation with 30-bar candle close. VA width needs verification against 25pt minimum.",
-  "tpo_remarks": "Upper fattening detected with single prints both above and below — volatile two-sided auction. Profile shape suggests balance with slight upward skew. DPOC migration data pending (available after 11:05).",
-  "evidence": [
-    "1. IB range 342.75pts with extension above IBH 24947.75 by 93pts — wide responsive range",
-    "2. Deterministic: Balance day type, Bullish bias at 55% confidence, Weak trend strength",
-    "3. CRI STAND_DOWN with Bear Trap detected — wick parade 22 bull vs 25 bear",
-    "4. No strategy triggers active — OR Rev outside window, Edge Fade not yet open"
-  ],
-  "what_could_go_wrong": [
-    "Bear trap resolves with sharp reversal below IBH 24947.75 — trapped longs from morning rally unwind",
-    "DPOC migration (pending) shows flat/down — would negate Bullish bias and confirm rotation day"
-  ],
-  "one_liner": "Balance day, Bullish lean but Weak trend — CRI says stand down, observe only.",
-  "discipline": "CRI STAND_DOWN: no new entries. Size cap Flat. Bear Trap in play — do not chase the morning rally. Wait for CRI upgrade before any position."
-}
+For each date in range (sequentially):
+
+  deterministic_2026-02-26.jsonl (74 pending)
+    ├── Agent A (09:35–11:35, ~24)  → seg_2026-02-26_A.jsonl
+    ├── Agent B (11:40–13:40, ~24)  → seg_2026-02-26_B.jsonl  ← concurrent
+    └── Agent C (13:45–15:55, ~26)  → seg_2026-02-26_C.jsonl
+    → Merge → training_2026-02-26.jsonl (78 total)
+    → Validate → report
+
+  deterministic_2026-02-27.jsonl (74 pending)
+    ├── Agent A → seg_2026-02-27_A.jsonl
+    ├── Agent B → seg_2026-02-27_B.jsonl  ← concurrent
+    └── Agent C → seg_2026-02-27_C.jsonl
+    → Merge → training_2026-02-27.jsonl
+    → Validate → report
+
+  ... next date ...
+
+Final: validate-all + stats
 ```
