@@ -4,6 +4,9 @@
 > - [technical-design/14-strategy-agent-lifecycle.md](../technical-design/14-strategy-agent-lifecycle.md) — Strategy lifecycle stages (research → implement → backtest → walk-forward → shadow → promote → live)
 > - [technical-design/04-strategy-framework.md](../technical-design/04-strategy-framework.md) — StrategyBase interface, Signal model, YAML config, registry
 > - [technical-design/10-deterministic-modules.md](../technical-design/10-deterministic-modules.md) — Orchestrator, 38 modules, dependency chain, module interface
+> - [brainstorm/01-agent-consensus-architecture.md](../brainstorm/01-agent-consensus-architecture.md) — Original autonomous trading desk vision (8 strategy specialists, continuous analysis)
+> - [brainstorm/04-agent-specialization-and-consensus.md](../brainstorm/04-agent-specialization-and-consensus.md) — 5 approaches to agent specialization: Strategy Specialists, Domain Specialists, Hybrid, Bayesian Chain, Bayesian + Debate
+> - [brainstorm/05-training-data-pipeline-for-specialists.md](../brainstorm/05-training-data-pipeline-for-specialists.md) — Three-stage pipeline: Bulk Snapshot → Backtest Enrichment → Evidence Extraction
 
 ## Mission
 
@@ -458,6 +461,208 @@ Approach D (Layered) still applies as an **internal cleanup of the orchestrator*
 
 ---
 
+## Agent Pipeline Architecture (Incorporating Brainstorm Insights)
+
+> This section synthesizes insights from three prior brainstorm docs into Approach E's agent pipeline. The brainstorms explored agent specialization, consensus mechanisms, and training data pipelines. Here we evaluate what fits within the Event-Driven architecture and what should be adapted or deferred.
+
+### How Brainstorm Docs Map to Approach E
+
+| Brainstorm Concept | Original Assumption | Under Approach E | Verdict |
+|---|---|---|---|
+| **01: 8 strategy specialists + sub-agents (Advocate/Skeptic/Historian)** | Every specialist processes every snapshot continuously | Specialists ARE the deterministic strategies; sub-agents fire only on signal | **Adapt** — role structure useful, trigger model changes |
+| **01: Chief Strategist + Risk Manager orchestrators** | Synthesize all specialist reports every cycle | Only active signals reach agents; Orchestrator sees 1-3 signals/day, not 78 | **Keep** — but scope shrinks dramatically |
+| **01: TimescaleDB + Redis Streams real-time infra** | Continuous data flow between agents | Event-driven = simpler infra (DuckDB + cached snapshots sufficient for Phase 1) | **Defer** — overkill for signal-triggered model |
+| **04: Approach 1 (Strategy Specialists)** | LLM agents that reason about each strategy | Strategies are Tier 0 code, not LLM. Agents add judgment AFTER signal. | **Adapt** — specialist knowledge goes into agent prompts, not detection |
+| **04: Approach 4/5 (Bayesian + Debate)** | Bayesian probability chain before LLM debate | Fits perfectly as a fast-path filter between signal and agents | **Incorporate** — see below |
+| **04: Approach 2/3 (Domain Advisors)** | LLM agents for VWAP, HTF, ICT, Dalton, Order Flow | Orchestrator already does this deterministically (38 modules) | **Already built** — snapshot IS the domain analysis |
+| **05: Three-stage training pipeline** | Generates DuckDB tables for specialist training | Feeds Bayesian calibration tables AND agent context queries | **Incorporate** — foundational infrastructure |
+| **05: Per-strategy evidence extraction** | Build training pairs per strategy per domain | Directly supports strategy track records and historical context in agent_context | **Incorporate** — Phase 2 dependency |
+
+### Key Insight: Bayesian Pre-Filter Before Agent Debate
+
+Brainstorm/04's Approach 5 (Bayesian + Debate on conflicts) is the most valuable addition to Approach E. Currently, architecture/14 sends every signal to a full Advocate/Skeptic/Orchestrator debate (~2-5s). But most signals are either clearly good or clearly bad — the LLM debate is wasted on them.
+
+**Proposed: Add a Bayesian probability layer between strategy signal and agent debate.**
+
+```
+Strategy emits Signal
+         │
+         ▼
+  Bayesian Scorer (Tier 0, <10ms)
+  ─────────────────────────────────
+  Start: strategy base rate (from backtest, e.g., 64.4% WR for OR Rev)
+  Update: check each calibrated factor against current conditions
+    - IB range relative to ATR? (+/- WR adjustment)
+    - Day type match? (+/- WR adjustment)
+    - Wick parade count? (+/- WR adjustment)
+    - DPOC direction? (+/- WR adjustment)
+    - HTF alignment? (+/- WR adjustment)
+  Result: adjusted probability P
+         │
+         ├──── P > 70%  ──→  AUTO-TAKE (no debate, log reasoning)
+         │
+         ├──── P < 35%  ──→  AUTO-SKIP (no debate, log reasoning)
+         │
+         └──── 35-70%   ──→  AGENT DEBATE (ambiguous → invoke full pipeline)
+                              Advocate: "Why take despite uncertainty?"
+                              Skeptic:  "What's driving the ambiguity?"
+                              Orchestrator: resolves with historical context
+```
+
+**Why this works with Approach E:**
+- Bayesian scorer is Tier 0 (pure Python, <10ms) — same tier as strategies
+- Reduces LLM calls from ~100% of signals to ~30% (only ambiguous zone)
+- Clear signals get faster execution (no 2-5s debate latency)
+- Ambiguous signals get MORE attention (full debate resources focused where they matter)
+- Calibration tables come from brainstorm/05's training pipeline (Stage 3)
+- All decisions (auto and debated) log their probability chain for daily review
+
+**What we need to build this:**
+1. **Calibration tables** — Run all strategies through 266+ sessions, for each signal record: conditions at signal time → outcome. Compute per-factor hit rates. This is brainstorm/05's Stage 2 + Stage 3.
+2. **Bayesian update engine** — Lightweight Python module. Likelihood ratios per factor, updated as new trades complete. No LLM needed.
+3. **Threshold tuning** — Backtest different ambiguous-zone boundaries (35-70% vs 40-65% vs 45-60%). Optimize for: "what % of signals go to fast-path AND fast-path accuracy stays above 60%?"
+
+**Data concern:** 266 sessions may be thin for conditional probabilities (e.g., "OR reversal + wick parade > 4 + Trend day" might have only 5 instances). Mitigations:
+- Start with unconditional base rates (just the strategy's overall WR)
+- Add factors one at a time as data supports them
+- Use wider ambiguous zones initially, narrow as data accumulates
+- Pool similar strategies (OR reversal + OR acceptance share an "opening range" cluster)
+
+### Agent Roles Under Approach E
+
+Brainstorm/01 designed 8 strategy specialists, each with Advocate/Skeptic/Historian sub-agents. Under Approach E, the roles simplify because:
+
+1. **Strategy specialists don't need to be LLM agents** — The deterministic strategy code IS the specialist. It detects the setup in <10ms. The LLM doesn't need to learn setup detection.
+
+2. **Advocate/Skeptic/Orchestrator still make sense** — But they reason about WHETHER to take the signal, not WHETHER the setup exists. The setup already exists (strategy fired). The debate is about context, timing, and conviction.
+
+3. **Historian becomes a DuckDB query, not an agent** — "Show me the last 15 times OR reversal fired on a Trend day with wick parade > 3" is a SQL query, not an LLM task.
+
+**Revised agent roles for Approach E:**
+
+```
+Signal fires → Bayesian scorer → [if ambiguous] → Agent Debate
+                                                      │
+                                                      ▼
+                                               ┌─────────────┐
+                                               │  Advocate    │
+                                               │              │
+                                               │  Builds case │
+                                               │  FOR taking  │
+                                               │  the signal. │
+                                               │  Uses:       │
+                                               │  - Snapshot   │  (orchestrator context)
+                                               │  - DuckDB     │  (similar sessions)
+                                               │  - Bayesian P │  (quantitative base)
+                                               └──────┬───────┘
+                                                      │
+                                               ┌──────▼───────┐
+                                               │  Skeptic     │
+                                               │              │
+                                               │  Challenges  │
+                                               │  the case.   │
+                                               │  Asks:       │
+                                               │  - What's    │  driving the ambiguity?
+                                               │  - What does │  the losing subset look like?
+                                               │  - Any novel │  risk factors today?
+                                               └──────┬───────┘
+                                                      │
+                                               ┌──────▼───────┐
+                                               │ Orchestrator │
+                                               │              │
+                                               │ Resolves.    │
+                                               │ Sees:        │
+                                               │ - Advocate + │  Skeptic reasoning
+                                               │ - ALL pending│  signals (portfolio view)
+                                               │ - Daily P&L  │  and risk limits
+                                               │              │
+                                               │ Returns:     │
+                                               │ TAKE / SKIP  │
+                                               │ / REDUCE_SIZE│
+                                               └──────────────┘
+```
+
+**What changes from brainstorm/01:**
+- No per-strategy sub-agents — one Advocate/Skeptic pair debates ANY signal (prompt includes strategy-specific context from DuckDB)
+- Historian is a query function, not an agent
+- Orchestrator sees portfolio-level risk (max simultaneous positions, daily P&L limit)
+- The Advocate/Skeptic use ONE model + ONE LoRA with strategy-specific system prompts (not per-strategy LoRA)
+
+### Training Data Pipeline Connection
+
+Brainstorm/05's three-stage pipeline is the foundational infrastructure for both the Bayesian scorer and agent context:
+
+```
+Stage 1: Bulk Snapshot Generation          ──→  Orchestrator snapshots in DuckDB
+  (Already exists: generate_deterministic_snapshots.py)
+
+Stage 2: Backtest Enrichment               ──→  Per-signal snapshot + outcome
+  (Run backtest, at each signal capture:
+   strategy, direction, entry/stop/target,
+   WIN/LOSS, PnL, AND the orchestrator
+   snapshot at that moment)
+
+Stage 3: Evidence Extraction               ──→  Calibration tables + context DB
+  (Per strategy: factor → outcome tables
+   for Bayesian scorer.
+   Per signal: similar-session lookup
+   for agent context.)
+```
+
+**What this enables:**
+- **Bayesian scorer** reads Stage 3 calibration tables at startup, updates incrementally after each completed trade
+- **Advocate** queries Stage 2 for "last N signals from this strategy with similar conditions → what happened?"
+- **Skeptic** queries Stage 2 for "last N LOSING signals from this strategy → what were the conditions?"
+- **Daily reflection** (Tier 2, Opus) reviews Stage 2 for "sessions where Bayesian said TAKE but outcome was LOSS → recalibrate?"
+
+### Agentic Backtesting: Validating That Agents Add Alpha
+
+The ultimate test (brainstorm/04's Open Question #5): **Does agent consensus improve outcomes beyond what the mechanical strategy already produces?**
+
+To answer this, we need to backtest the full agent pipeline:
+
+```
+For each historical session (266+ sessions):
+  1. Run strategy signal loop → collect all signals
+  2. For each signal, run Bayesian scorer + agent debate
+  3. Record: signal + agent decision (TAKE/SKIP/REDUCE_SIZE)
+  4. Compare:
+     a. Mechanical-only: all signals taken (current backtest)
+     b. Bayesian-only:   auto-take P>70%, auto-skip P<35%, skip ambiguous
+     c. Full pipeline:   auto-take P>70%, auto-skip P<35%, debate ambiguous
+  5. Measure: WR, PF, net PnL, max DD for each approach
+```
+
+**Expected outcome:** Agent consensus should:
+- Improve WR by filtering low-confidence signals (SKIP the losers)
+- Slightly reduce total trades (fewer signals taken)
+- Meaningfully reduce drawdown (catching regime-inappropriate signals)
+- Possibly hurt PF if agents are too conservative (skip some winners too)
+
+**The exciting experiment** (user's idea): Take a mediocre strategy (e.g., Mean Reversion VWAP, currently -$6,925 net) and run it through the agent pipeline. If agents can turn a slightly-losing strategy into a breakeven or winning one by SKIPing the bad signals, that validates the entire architecture.
+
+**Infrastructure needed:**
+- Backtest engine needs a "replay mode" that calls the agent pipeline at each signal
+- Need to mock or actually run LLM inference for 266+ sessions × 1-3 signals/session ≈ 500-800 LLM calls
+- Results stored in DuckDB for comparison analysis
+- This is a Phase 2 validation exercise (after Bayesian scorer and agent pipeline are built)
+
+### What NOT to Incorporate
+
+Some brainstorm concepts are deferred because they don't fit Approach E yet:
+
+1. **Per-strategy LoRA adapters** (brainstorm/04, Open Question #3) — Start with one LoRA + prompt-driven specialization. Only split if evidence shows prompting is insufficient.
+
+2. **Domain specialist agents as LLM agents** (brainstorm/04, Approach 2) — The 38 deterministic modules already produce domain analysis faster and more reliably than LLM agents would. Domain knowledge lives in the snapshot, not in an agent.
+
+3. **Continuous agent processing** (brainstorm/01) — The entire point of Approach E is event-driven. Running agents continuously contradicts the signal-triggered model and leads to overtrading.
+
+4. **Redis Streams / TimescaleDB** (brainstorm/01) — Overkill for Phase 1. DuckDB + file cache handles 1-3 signals/day. Revisit if signal volume or multi-instrument trading requires real-time streaming.
+
+5. **8 specialist sub-agent teams** (brainstorm/01) — Too much infra for current signal volume. One Advocate/Skeptic/Orchestrator trio with strategy-specific prompts is sufficient. Scale to per-strategy agents only if one trio can't handle the reasoning quality.
+
+---
+
 ## Skills Needed
 
 | Skill | Purpose | Status |
@@ -555,24 +760,46 @@ These can be fixed independently of the architecture choice.
 4. Fix the 3 known bugs (20P cutoff, 80P Model B, OR constants)
 5. Add tests for signal loop + config loading
 
-### Phase 2: Agent Pipeline Integration
+### Phase 2: Training Data Pipeline + Bayesian Scorer
 
-1. Create `rockit_core/agent_trigger.py` — receives a Signal + builds `agent_context`:
+1. **Backtest enrichment** (brainstorm/05 Stage 2): Modify backtest engine to capture the orchestrator snapshot at each signal point. Store in DuckDB: strategy, signal, snapshot_hash, conditions, outcome.
+2. **Evidence extraction** (brainstorm/05 Stage 3): For each strategy, compute per-factor hit rates (e.g., "OR reversal on Trend day: 72% WR" vs "OR reversal on Balance day: 54% WR"). Build calibration tables.
+3. **Bayesian scorer module** (`rockit_core/bayesian_scorer.py`): Loads calibration tables at startup. Given a Signal + current conditions, outputs adjusted probability. Pure Python, <10ms.
+4. **Threshold tuning**: Backtest different ambiguous zones (35-70%, 40-65%, etc.). Optimize for fast-path accuracy + coverage.
+5. Tests for scorer accuracy against historical data.
+
+### Phase 3: Agent Pipeline Integration
+
+1. Create `rockit_core/agent_trigger.py` — receives a Signal + Bayesian score + builds `agent_context`:
+   - Only fires for signals in the ambiguous zone (35-70%)
+   - Auto-TAKE for P > 70%, auto-SKIP for P < 35%
    - Grabs latest cached orchestrator snapshot
    - Queries DuckDB for similar sessions and strategy track record
-   - Includes signal metadata and strategy baseline
+   - Includes Bayesian probability chain (what shifted P and by how much)
 2. Wire agent trigger → LangGraph agent pipeline (Advocate/Skeptic/Orchestrator)
-3. Agent pipeline returns: TAKE / SKIP / REDUCE_SIZE + reasoning
-4. Dashboard alert or client execution based on decision
+3. Advocate and Skeptic receive: signal + snapshot + DuckDB results + Bayesian breakdown
+4. Agent pipeline returns: TAKE / SKIP / REDUCE_SIZE + reasoning
+5. Dashboard alert or client execution based on decision
 
-### Phase 3: Orchestrator Cleanup (Approach D internal)
+### Phase 4: Agentic Backtesting (Validation)
+
+1. **Replay mode** in backtest engine: for each historical signal, run Bayesian scorer + agent debate
+2. Compare three approaches across 266+ sessions:
+   - Mechanical-only (all signals taken — current baseline)
+   - Bayesian-only (auto-take/skip, discard ambiguous)
+   - Full pipeline (auto-take/skip, debate ambiguous)
+3. **Mediocre strategy experiment**: Run Mean Reversion VWAP (currently -$6,925) through the full pipeline. If agents turn it breakeven or positive, that's strong validation.
+4. Store all decisions + reasoning in DuckDB for analysis
+5. Success metric: full pipeline WR and PF exceed mechanical-only with lower drawdown
+
+### Phase 5: Orchestrator Cleanup (Approach D internal)
 
 1. Remove strategy detection modules from orchestrator Phase 3 (or_reversal, globex_va_analysis 80P detection, twenty_percent_rule, edge_fade, va_edge_fade)
 2. Split hybrid modules: `globex_va_analysis.py` → pure VA data (stays) + 80P signal (now lives only in strategy)
 3. Orchestrator becomes purely market structure data
 4. Orchestrator publishes snapshots to cache/store for agent consumption
 
-### Phase 4: Strategy Versioning & A/B Testing
+### Phase 6: Strategy Versioning & A/B Testing
 
 1. Per-strategy config with entry/risk/target model + constants
 2. Baseline snapshot in config (WR, PF, trade count, date)
@@ -598,15 +825,35 @@ Market Data Feed (1-min bars)
   Signal emitted? ──YES──┐                    Training pipeline reads these.
          │               │
          NO              ▼
-         │        Agent Pipeline (on-demand)
-     (do nothing)  ─────────────────────────
-                   Reads latest snapshot from cache.
-                   Queries DuckDB for history.
-                   Advocate/Skeptic/Orchestrator debate.
-                   ~2-5s total.
+         │        Bayesian Scorer (Tier 0, <10ms)
+     (do nothing)  ────────────────────────────────
+                   Loads calibration tables from DuckDB.
+                   Computes adjusted probability P.
                            │
-                           ▼
-                   Decision: TAKE / SKIP / REDUCE_SIZE
+                   ┌───────┼────────┐
+                   │       │        │
+                 P>70%   35-70%   P<35%
+                   │       │        │
+                   ▼       ▼        ▼
+               AUTO-TAKE  DEBATE  AUTO-SKIP
+               (log it)    │     (log it)
+                   │       │        │
+                   │       ▼        │
+                   │  Agent Pipeline│
+                   │  (on-demand)   │
+                   │  ─────────     │
+                   │  Read snapshot  │
+                   │  Query DuckDB   │
+                   │  Advocate/      │
+                   │  Skeptic/       │
+                   │  Orchestrator   │
+                   │  ~2-5s          │
+                   │       │        │
+                   │       ▼        │
+                   │  TAKE/SKIP/    │
+                   │  REDUCE_SIZE   │
+                   │       │        │
+                   └───────┼────────┘
                            │
                    ┌───────┴────────┐
                    │                │
@@ -614,14 +861,24 @@ Market Data Feed (1-min bars)
               Dashboard          Client
               Alert              Execution
               (all modes)        (live mode only)
+                                     │
+                                     ▼
+                              Daily Reflection (Tier 2)
+                              ─────────────────────────
+                              Opus reviews all decisions.
+                              Recalibrates Bayesian tables.
+                              Flags blind spots for research.
 ```
 
 **Why this is more scalable:**
 - Adding strategy #11 adds ~1ms to the 1-min loop, not ~1.6s to the orchestrator
 - Agent compute scales with signals, not with time — quiet sessions = no agent work
+- Bayesian fast-path handles ~70% of signals without any LLM call
+- LLM debate focuses on the ~30% of ambiguous signals where it matters most
 - Orchestrator snapshot generation and strategy detection are independent processes
-- LLM inference (Tier 1 Qwen3.5) is only used for signals that have a real trade setup
+- LLM inference (Tier 1 Qwen3.5) is only used for ambiguous signals
 - The orchestrator + LLM continue to interpret market data for training and dashboard — this doesn't change
+- Daily reflection loop feeds back into both Bayesian calibration AND research pipeline
 
 ---
 
@@ -632,3 +889,8 @@ Market Data Feed (1-min bars)
 - Holiday/early-close calendar awareness
 - Cross-instrument strategy coordination
 - Client-side execution protocol (NinjaTrader/TradingView — see `04-platform-abstraction.md`)
+- Per-strategy LoRA adapters (brainstorm/04 Open Question #3 — start with one LoRA + prompts)
+- Domain specialist agents as LLM agents (brainstorm/04 Approach 2 — the 38 deterministic modules already do this faster)
+- Continuous agent processing (brainstorm/01 — contradicts signal-triggered model)
+- Redis Streams / TimescaleDB real-time infra (brainstorm/01 — overkill for 1-3 signals/day)
+- 8 specialist sub-agent teams (brainstorm/01 — one Advocate/Skeptic/Orchestrator trio is sufficient for current signal volume)
