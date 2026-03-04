@@ -1,56 +1,54 @@
 """
-Strategy 6: B-Day (Narrow IB, No Extension - True Trapped Balance)
+Strategy 6: B-Day IBL Fade — 30-Minute Acceptance Model (Config H)
 
-Dalton Playbook Rules:
-  - Micro/flat only - rarely 3/3 Lanto
-  - Narrow IB, price never leaves first hour (Strength: Weak)
-  - Symmetric build, flat DPOC
-  - Bias: Neutral - edge fades only
-  - Fade extremes: poor high/low inside IB, POC/VWAP bounces
-  - No directional size
+Research Source: Balance Day IBL Fade study (259 sessions, NQ 1-min bars)
 
-Entry Model (ICT-enhanced):
-  - Fade at IBL: long when price touches IBL and REJECTS
-    * Require: IFVG bull entry OR close back above IBL with volume rejection
-    * FVG confirmation: bar enters a bull FVG zone at IBL
-  - Max 1 long fade per session
-  - 30-bar cooldown between trades
+Key Finding: "For IB edges, delta provides zero value (-2pp). The market
+needs TIME to prove rejection." The 30-min acceptance model (+28pp edge)
+is the correct primary filter.
 
-Stops: Outside IB extreme + 10% buffer
+Entry Model (30-min acceptance):
+  1. Detect first IBL touch (low within 5 pts of IBL)
+  2. Wait 30 bars (30 min at 1-min resolution)
+  3. At bar 30: if close > IBL → acceptance confirmed → ENTER LONG
+  4. If close <= IBL at bar 30 → failed acceptance → no trade
+
+First-Touch Filter (Tier 3):
+  - Only trade the FIRST IBL touch per session
+  - Touch #1 = 33% raw success vs #2 = 20%, #3 = 13%
+
+VWAP Alignment (confidence booster, not hard filter):
+  - At touch time: VWAP > IB mid → confidence = 'high'
+  - VWAP aligned LONG = 46% raw success (2.7x baseline)
+  - Still takes the trade either way — acceptance is the primary filter
+
+Expanded Day Types:
+  - LONG works on B-Day (76%), P-Day (62%), Neutral (61%)
+  - "You CANNOT predict EOD day type at IB close (20-32% accuracy).
+    Fade every IB edge and let the acceptance model filter."
+
+Stops: IBL - 10% of IB range
 Targets: IB midpoint (POC/VWAP mean reversion)
+Time gate: No entries after 14:00
+Max 1 LONG per session
 
-Key Findings (v12, 62 sessions):
-  - IBL fade LONG: 71.4% WR (5/7), +$1,806 — THE B-Day edge
-  - IBH fade SHORT: 0-22% WR across ALL tests — NQ long bias kills shorts
-    * Even with 3rd test exhaustion model: T3 was 0/5 WR (-$1,266)
-    * Even with 4+ test exhaustion: tiny wins only (+$44, +$121)
-    * DISABLED permanently on NQ
-
-  - Multi-test tracking insight: T1 fades at IBL are 100% WR (3/3),
-    T2/T3 are 50% WR. But sample size is tiny (7 total trades),
-    so we keep quality >= 2 + delta for all touches.
-
-  - b_day_confidence >= 0.5 is the optimal threshold for filtering
-    out false B-Day classifications.
-
-IBH Fade Cross-Instrument Opportunity:
-  The 3rd test exhaustion SHORT may work on weaker instruments (ES, YM)
-  where the long bias is less extreme. Cross-instrument analysis needed.
+Study Results:
+  - Config H: 64% WR, 24.2 trades/mo
+  - Tier 3 (first-touch): 82% WR, PF 9.35, 3.4 trades/mo
 """
 
 from typing import Optional, List
+
 import pandas as pd
-import numpy as np
 
 from datetime import time as _time
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
-from rockit_core.config.constants import BDAY_COOLDOWN_BARS, BDAY_STOP_IB_BUFFER
-
-# B-Day IB range cap: use rolling 90th percentile instead of hardcoded 400 pts.
-# Extremely wide IB (relative to recent history) is NOT a true balance day.
-BDAY_MAX_IB_PCTL = 90          # Percentile of rolling IB history for cap
-BDAY_MAX_IB_BUFFER = 1.2       # Allow 20% above the percentile
+from rockit_core.config.constants import (
+    BDAY_ACCEPTANCE_BARS,
+    BDAY_TOUCH_TOLERANCE,
+    BDAY_STOP_IB_BUFFER,
+)
 
 # B-Day last entry time: entries after 14:00 have insufficient time to reach target.
 BDAY_LAST_ENTRY_TIME = _time(14, 0)
@@ -64,7 +62,7 @@ class BDayStrategy(StrategyBase):
 
     @property
     def applicable_day_types(self) -> List[str]:
-        return ['b_day']
+        return ['b_day', 'neutral', 'p_day']
 
     def on_session_start(self, session_date, ib_high, ib_low, ib_range, session_context):
         self._ib_high = ib_high
@@ -72,108 +70,47 @@ class BDayStrategy(StrategyBase):
         self._ib_range = ib_range
         self._ib_mid = (ib_high + ib_low) / 2
 
-        # Adaptive IB range cap using rolling history
-        ib_history = session_context.get('ib_range_history', [])
-        if len(ib_history) >= 5:
-            pctl_val = np.percentile(ib_history[-20:], BDAY_MAX_IB_PCTL)
-            self._max_ib = pctl_val * BDAY_MAX_IB_BUFFER
-        else:
-            self._max_ib = 400.0  # fallback for first sessions
-
-        # Regime filter removed: the median IB < 130 threshold was miscalibrated
-        # for NQ, blocking 96% of sessions. The study results (82% WR, 9.35 PF)
-        # were achieved without regime filtering. The adaptive IB cap already
-        # handles unusually wide IB days.
-        self._regime_allows_bday = True
-
         self._val_fade_taken = False
-        self._last_entry_bar = -999
-
-        # Track rejection patterns at IBL
-        self._ibl_touch_count = 0
-        self._ibl_last_touch_bar = -999
+        self._touch_bar_index = None
+        self._first_touch_taken = False
+        self._vwap_aligned = False
 
     def on_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
         day_type = session_context.get('day_type', '')
         if day_type not in self.applicable_day_types:
             return None
 
-        # B-Days: only trade when strength is weak (no extension)
-        strength = session_context.get('trend_strength', 'weak')
-        if strength != 'weak':
+        # Already traded this session
+        if self._val_fade_taken:
             return None
 
-        # B-Day confidence check — lowered from 0.5 to 0.3 because RTH IB
-        # ranges are larger (median ~196 pts), which changes the confidence
-        # distribution. The study's 0.5 threshold was calibrated on different
-        # IB ranges. Compensated by the quality >= 2 + delta gate.
-        b_day_conf = session_context.get('b_day_confidence', 0.0)
-        if b_day_conf < 0.3:
-            return None
-
-        # Regime-aware filter: skip B-Day in low-vol regimes
-        if not self._regime_allows_bday:
-            return None
-
-        # Time gate: B-Day fades need time to develop toward IB midpoint.
-        # Very late entries (after 14:00) have insufficient time to reach target.
-        # Diagnostics: 13:08 entry won (+$97), 14:07 entry lost, 15:17 entry lost.
+        # Time gate
         bar_time = session_context.get('bar_time')
         if bar_time and bar_time >= BDAY_LAST_ENTRY_TIME:
             return None
 
-        # IB range cap removed: with RTH IB (median ~196 pts), the adaptive
-        # cap was filtering too many valid sessions. The day_type classification
-        # (requires INSIDE + WEAK) already handles non-balance days. The R:R
-        # check below provides a safety net against unreachable targets.
-
-        # Cooldown
-        if bar_index - self._last_entry_bar < BDAY_COOLDOWN_BARS:
-            return None
-
-        if self._val_fade_taken:
-            return None
-
         current_price = bar['close']
-        delta = bar.get('delta', 0)
 
-        # Track touches for multi-touch quality check
-        if bar['low'] <= self._ib_low:
-            if bar_index - self._ibl_last_touch_bar <= 3:
-                self._ibl_touch_count += 1
-            else:
-                self._ibl_touch_count = 1
-            self._ibl_last_touch_bar = bar_index
+        # Phase 1: Detect first IBL touch
+        if self._touch_bar_index is None and not self._first_touch_taken:
+            if bar['low'] <= self._ib_low + BDAY_TOUCH_TOLERANCE:
+                self._touch_bar_index = bar_index
+                self._first_touch_taken = True
+                # Check VWAP alignment at touch time
+                vwap = bar.get('vwap')
+                self._vwap_aligned = vwap is not None and vwap > self._ib_mid
+                return None  # Don't enter yet, wait for acceptance
 
-        # --- IBH fade (SHORT) DISABLED ---
-        # Exhaustive testing across 62 sessions, multiple approaches:
-        #   - v9: Simple quality filter: 10% WR (1/10), -$2,630
-        #   - v12: Quality >= 3 + delta: 10-22% WR, still negative
-        #   - v13: 3rd test exhaustion T3: 0% WR (0/5), -$1,266
-        #   - v13: 4th/5th test: tiny wins (+$44, +$121), not edge
-        # NQ long bias makes B-Day IBH fades negative-expectancy.
-        # Cross-instrument opportunity: may work on ES/YM (weaker instruments).
+        # Phase 2: Wait for acceptance (30 bars after touch)
+        if self._touch_bar_index is not None:
+            bars_since_touch = bar_index - self._touch_bar_index
+            if bars_since_touch < BDAY_ACCEPTANCE_BARS:
+                return None  # Still waiting
 
-        # --- Fade near IBL (long) ---
-        if not self._val_fade_taken and bar['low'] <= self._ib_low:
-            # Rejection: close back above IBL
-            if current_price > self._ib_low:
-                # Quality check
-                has_fvg = bar.get('ifvg_bull_entry', False) or bar.get('fvg_bull', False)
-                has_fvg_15m = bar.get('fvg_bull_15m', False)
-                has_delta_rejection = delta > 0  # Buyers stepping in
-                has_multi_touch = self._ibl_touch_count >= 2
-                has_volume_spike = bar.get('volume_spike', 1.0) > 1.3
-
-                quality_count = sum([
-                    bool(has_fvg or has_fvg_15m),
-                    has_delta_rejection,
-                    has_multi_touch,
-                    has_volume_spike,
-                ])
-
-                # Require quality >= 2 AND delta confirmation (buyers present)
-                if quality_count >= 2 and has_delta_rejection:
+            # Phase 3: Check acceptance at bar 30
+            if bars_since_touch == BDAY_ACCEPTANCE_BARS:
+                if current_price > self._ib_low:
+                    # Acceptance confirmed — enter LONG
                     entry_price = current_price
                     stop_price = self._ib_low - (self._ib_range * BDAY_STOP_IB_BUFFER)
                     target_price = self._ib_mid
@@ -181,12 +118,12 @@ class BDayStrategy(StrategyBase):
                     risk = abs(entry_price - stop_price)
                     reward = abs(target_price - entry_price)
                     if reward > 0 and risk / reward > 2.5:
+                        self._touch_bar_index = None
                         return None
 
-                    confidence = 'high' if quality_count >= 3 else 'medium'
+                    confidence = 'high' if self._vwap_aligned else 'medium'
 
                     self._val_fade_taken = True
-                    self._last_entry_bar = bar_index
 
                     return Signal(
                         timestamp=bar.get('timestamp', bar.name) if hasattr(bar, 'name') else bar.get('timestamp'),
@@ -196,9 +133,12 @@ class BDayStrategy(StrategyBase):
                         target_price=target_price,
                         strategy_name=self.name,
                         setup_type='B_DAY_IBL_FADE',
-                        day_type='b_day',
-                        trend_strength='weak',
+                        day_type=day_type,
                         confidence=confidence,
                     )
+                else:
+                    # Failed acceptance — reset (but first touch already taken, no more trades)
+                    self._touch_bar_index = None
+                    return None
 
         return None

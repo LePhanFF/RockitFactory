@@ -1,26 +1,11 @@
 """
-Edge Fade Strategy (Edge-to-Mid Mean Reversion)
+Edge Zone Analysis — IB edge zone detection with order flow context.
 
-Fades from IB edges back to IB midpoint on balance/neutral range days.
-Explicit LONG-only mean reversion entry targeting the lower 25% of IB range.
+Market structure module: Detects when price is in the lower edge zone of IB,
+checks for IB expansion, order flow quality, and confirmation signals (CVD
+divergence, FVG confluence, 5-min inversion). Pure observation — no trade signals.
 
-Performance (259-day backtest, BookMapOrderFlowStudies-2):
-  - Win Rate: 58.1% (93 trades/year)
-  - Net P&L: $9,486 (+$102/trade avg)
-  - Profit Factor: 1.62
-  - Max Drawdown: $2,374
-  - Active window: 10:00-13:30 ET (post-OR, before PM morph)
-
-Entry confirmation models (boost confidence when present):
-  - CVD divergence: Price near lows but CVD rising (smart money accumulating)
-  - FVG confluence: Entry inside bullish Fair Value Gap zone
-  - 5-min inversion: 5-min bearish-to-bullish candle reversal
-
-Key design:
-  - LONG ONLY (NQ long bias, all shorts negative expectancy)
-  - Requires IB expansion (>1.2x 5-day average) to filter choppy days
-  - Requires order flow confirmation (delta > 0, quality gates)
-  - Target: IB midpoint (natural mean reversion destination)
+Detection window: 10:00-13:30 ET (post-OR, before PM morph)
 """
 
 import pandas as pd
@@ -28,9 +13,11 @@ import numpy as np
 from datetime import time as _time
 
 
-def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00", ib_history_5days=None):
+def get_edge_zone_analysis(df_current, intraday_data=None, current_time_str="12:00", ib_history_5days=None):
     """
-    Detect Edge Fade mean reversion setups (lower IB edge → midpoint).
+    Analyze edge zone conditions — IB expansion, order flow, confirmations.
+
+    Market structure module: Pure observation — no trade signals.
 
     Args:
         df_current: DataFrame with 5-min OHLCV data for current session
@@ -39,39 +26,19 @@ def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00"
         ib_history_5days: List of IB ranges for last 5 days (for expansion check)
 
     Returns:
-        dict: {
-            "in_edge_zone": bool,
-            "ib_expanded": bool,
-            "bearish_extended": bool,
-            "delta_positive": bool,
-            "of_quality": int (0-3),
-            "cvd_divergence": bool,
-            "fvg_confluence": bool,
-            "inversion_5m": bool,
-            "signal": "LONG" | "NONE",
-            "entry": float,
-            "stop": float,
-            "target": float,
-            "risk": float,
-            "reward": float,
-            "rr": float,
-            "confidence": "high" | "medium",
-            "note": str
-        }
+        dict: Edge zone status, IB expansion, order flow quality, confirmations
     """
     # Only active 10:00-13:30 ET
     current_time = pd.to_datetime(current_time_str).time()
     if current_time < _time(10, 0) or current_time >= _time(13, 30):
-        return {"signal": "NONE", "note": "Outside Edge Fade window (10:00-13:30)"}
+        return {"note": "Outside Edge Fade window (10:00-13:30)"}
 
     if intraday_data is None:
         intraday_data = {}
 
     # Constants
     EDGE_ZONE_PCT = 0.25  # Lower 25% of IB
-    EDGE_STOP_BUFFER = 0.15  # Stop: IBL - 15% IB range
-    EDGE_MIN_RR = 1.0  # Minimum reward/risk
-    IB_EXPANSION_RATIO = 1.2  # Only trade when IB >= 1.2x recent avg
+    IB_EXPANSION_RATIO = 1.2  # Only flag when IB >= 1.2x recent avg
     MAX_BEARISH_EXT = 0.30  # Max extension below IBL (as % of IB)
     CVD_LOOKBACK = 10  # Bars for CVD divergence
     CVD_PRICE_POSITION_MAX = 0.40  # Price in lower 40% of range
@@ -83,7 +50,7 @@ def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00"
     ib_range = ib_data.get('ib_range')
 
     if ib_high is None or ib_low is None or ib_range is None or ib_range <= 0:
-        return {"signal": "NONE", "note": "Missing or invalid IB data"}
+        return {"note": "Missing or invalid IB data"}
 
     ib_mid = (ib_high + ib_low) / 2
 
@@ -96,14 +63,13 @@ def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00"
 
     if not ib_expanded:
         return {
-            "signal": "NONE",
             "ib_expanded": False,
             "note": "IB not expanded enough (choppy session)"
         }
 
     # Get current price and delta
     if len(df_current) == 0:
-        return {"signal": "NONE", "note": "No current bar data"}
+        return {"note": "No current bar data"}
 
     current_bar = df_current.iloc[-1]
     current_price = current_bar.get('close', 0)
@@ -122,7 +88,6 @@ def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00"
 
     if bearish_extended:
         return {
-            "signal": "NONE",
             "bearish_extended": True,
             "note": "Extreme bearish extension (breakdown scenario, skip)"
         }
@@ -132,7 +97,6 @@ def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00"
 
     if not delta_positive:
         return {
-            "signal": "NONE",
             "delta_positive": False,
             "note": "Delta not positive (selling pressure)"
         }
@@ -205,31 +169,13 @@ def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00"
         current_bullish = current_bar.get('close', 0) > current_bar.get('open', 0)
         inversion_5m = (not prior_bullish) and current_bullish
 
-    # Determine confidence and signal
+    # Determine confidence
     confidence = "medium"
     has_confirmation = cvd_divergence or fvg_confluence or inversion_5m
     if has_confirmation:
         confidence = "high"
 
-    signal = "NONE"
-    entry_price = None
-    stop_price = None
-    target_price = None
-
-    # Generate LONG signal if all conditions met
-    if in_edge_zone and of_quality >= 2:
-        entry_price = current_price
-        stop_price = ib_low - (ib_range * EDGE_STOP_BUFFER)
-        target_price = ib_mid
-
-        risk = entry_price - stop_price
-        reward = target_price - entry_price
-
-        if reward / risk >= EDGE_MIN_RR if risk > 0 else False:
-            signal = "LONG"
-
-    # Build output
-    result = {
+    return {
         "in_edge_zone": bool(in_edge_zone),
         "ib_expanded": bool(ib_expanded),
         "bearish_extended": bool(bearish_extended),
@@ -238,34 +184,10 @@ def get_edge_fade_setup(df_current, intraday_data=None, current_time_str="12:00"
         "cvd_divergence": bool(cvd_divergence),
         "fvg_confluence": bool(fvg_confluence),
         "inversion_5m": bool(inversion_5m),
-        "signal": signal,
+        "confidence": confidence,
+        "note": f"Edge zone: in_zone={in_edge_zone}, of_quality={of_quality}/3, CVD={cvd_divergence}, FVG={fvg_confluence}, inv={inversion_5m}"
     }
 
-    if signal == "LONG" and entry_price is not None:
-        risk = entry_price - stop_price
-        reward = target_price - entry_price
-        rr = reward / risk if risk > 0 else 0
 
-        result.update({
-            "entry": float(entry_price),
-            "stop": float(stop_price),
-            "target": float(target_price),
-            "risk": float(risk),
-            "reward": float(reward),
-            "rr": float(rr),
-            "confidence": confidence,
-            "note": f"Edge Fade LONG: lower 25% of IB ({ib_low:.1f}-{edge_ceiling:.1f}) → IB mid ({ib_mid:.1f}). Confirmations: CVD={cvd_divergence}, FVG={fvg_confluence}, Inversion={inversion_5m}"
-        })
-    else:
-        result.update({
-            "entry": 0.0,
-            "stop": 0.0,
-            "target": 0.0,
-            "risk": 0.0,
-            "reward": 0.0,
-            "rr": 0.0,
-            "confidence": confidence,
-            "note": f"No Edge Fade signal (edge_zone={in_edge_zone}, of_quality={of_quality}/3, delta_pos={delta_positive})"
-        })
-
-    return result
+# Keep old name as alias for backward compatibility during transition
+get_edge_fade_setup = get_edge_zone_analysis

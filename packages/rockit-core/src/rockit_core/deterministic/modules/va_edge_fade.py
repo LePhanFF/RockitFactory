@@ -1,34 +1,21 @@
 #!/usr/bin/env python3
 """
-VA Edge Fade — Price Pokes Beyond VA Boundary, Fails, Fade Back In
+VA Poke Analysis — Price poke detection beyond prior session VA boundaries.
 
-Price approaches the prior session VA edge, temporarily pokes outside
-(1-min bar breaks VA edge AND closes back inside same bar = rejection signal),
-then confirmed with 2x consecutive 5-min closes back inside.
+Market structure module: Detects pokes beyond prior session VAH/VAL,
+tracks poke count, rejection/confirmation status. Pure observation — no trade signals.
 
-Key research findings (Feb 2026, 259 sessions backtest):
-- Best overall: 1st poke, 2x5min entry, 2 ATR stop, 0.2 ATR trail → 66.9% WR, PF 5.42
-- SHORTS ONLY (VAH poke): 70.0% WR, PF 7.28, $396/mo — NQ structural sell-side supply
-- 2nd poke (retest): 67.6% WR, PF 4.54 on limit entry at VA edge
-- Stop: 2x ATR (NOT 0.5 ATR trail — 0.5 ATR creates dead zone, 44% early exits)
-- Min VA width filter: 25 pts
-- Entry cutoff: 13:00 ET (entries 10:00-11:00 window have 2-5% better WR)
-- Events per month: 1st poke ~13 events, 2nd poke ~9 events
-
-Poke Types:
-  - 1st poke: First time price touches/breaks VA edge today (highest signal quality)
-  - 2nd poke: Second test of same VA edge (retest = higher confirmation)
-
-Entry Models:
-  - 2x5min: Wait for 2 consecutive 5-min closes back inside VA (best frequency/WR combo)
-  - Limit VA edge: Place limit at VA edge ± 5pt buffer (fills on retest sweep)
+Poke detection:
+  - VAH poke: bar.high > VAH AND bar.close <= VAH (rejection)
+  - VAL poke: bar.low < VAL AND bar.close >= VAL (rejection)
+  - Confirmation: 2x consecutive 5-min closes back inside VA after poke
 """
 
 import pandas as pd
 from typing import Dict, Optional, Tuple
 
 
-def get_va_edge_fade(
+def get_va_poke_analysis(
     df_current: pd.DataFrame,
     current_time_str: str = "11:45",
     previous_session_vah: float = None,
@@ -37,32 +24,19 @@ def get_va_edge_fade(
     **kwargs
 ) -> Dict:
     """
-    Detect VA edge fade setups on both VAH (SHORT) and VAL (LONG).
+    Analyze VA edge poke events — poke counts, rejection patterns.
+
+    Market structure module: Pure observation — no trade signals.
 
     Args:
         df_current: Current session 5-min bars (no lookahead)
         current_time_str: Current time HH:MM
-        previous_session_vah: Prior session VAH (from globex_va_analysis)
-        previous_session_val: Prior session VAL (from globex_va_analysis)
-        atr14: ATR(14) from ib_location
+        previous_session_vah: Prior session VAH (from prior_va_analysis)
+        previous_session_val: Prior session VAL (from prior_va_analysis)
+        atr14: ATR(14) from ib_location (unused, kept for API compat)
 
     Returns:
-        {
-            "vah_poke_count": int (pokes above VAH today),
-            "val_poke_count": int (pokes below VAL today),
-            "active_setup": "short_vah_fade" | "long_val_fade" | "none",
-            "poke_number": int (1st or 2nd poke = higher quality),
-            "confirmation_method": "2x5min" | "watching" | "none",
-            "confirmed": bool,
-            "entry_price": float,
-            "stop_price": float (2x ATR from entry),
-            "risk_pts": float,
-            "target_poc": float (prior session POC),
-            "target_2r": float,
-            "short_bias_bonus": bool (SHORTS get +WR per NQ structure),
-            "confidence": int 0-100,
-            ...
-        }
+        Poke counts, rejection status, confirmation tracking
     """
 
     if previous_session_vah is None or previous_session_val is None:
@@ -122,50 +96,8 @@ def get_va_edge_fade(
         previous_session_vah, previous_session_val
     )
 
-    # =========================================================================
-    # STEP 4: Entry/Stop/Target
-    # =========================================================================
-
-    stop_price = None
-    risk_pts = None
-    entry_price = confirm_entry_price
-    target_2r = None
-    target_3r = None
-
-    if confirmed and entry_price:
-        if atr14 and atr14 > 0:
-            stop_distance = round(2 * atr14, 2)
-        else:
-            stop_distance = round(0.10 * va_width, 2)  # Fallback: 10% of VA width
-
-        if active_setup == "short_vah_fade":
-            stop_price = round(entry_price + stop_distance, 2)
-        else:
-            stop_price = round(entry_price - stop_distance, 2)
-
-        risk_pts = round(abs(entry_price - stop_price), 1)
-        target_2r = round(entry_price - (2 * risk_pts), 2) if active_setup == "short_vah_fade" else round(entry_price + (2 * risk_pts), 2)
-        target_3r = round(entry_price - (3 * risk_pts), 2) if active_setup == "short_vah_fade" else round(entry_price + (3 * risk_pts), 2)
-
-    # Limit order setup (alternative: place limit at VA edge ± 5pt buffer)
-    if active_setup == "short_vah_fade":
-        limit_entry = round(previous_session_vah + 5, 2)  # SHORT limit above VAH
-        limit_stop = round(previous_session_vah + 10 + (2 * (atr14 or 20)), 2)
-    else:
-        limit_entry = round(previous_session_val - 5, 2)   # LONG limit below VAL
-        limit_stop = round(previous_session_val - 10 - (2 * (atr14 or 20)), 2)
-
     # Short bias: VAH fades (SHORT) get structural NQ bonus per research
     short_bias_bonus = active_setup == "short_vah_fade"
-
-    past_cutoff = current_time >= entry_cutoff
-    # Peak window: 10:00-11:00 ET gets 2-5% WR boost
-    morning_window = (pd.to_datetime("10:00").time() <= current_time <= pd.to_datetime("11:00").time())
-
-    confidence = _compute_confidence(
-        active_setup, poke_number, confirmed, short_bias_bonus,
-        past_cutoff, morning_window
-    )
 
     return {
         # Poke tracking
@@ -173,30 +105,21 @@ def get_va_edge_fade(
         "val_poke_count": len(val_pokes),
         "poke_number": poke_number,                    # 1 = first touch, 2 = retest (higher conf)
 
-        # Setup state
-        "active_setup": active_setup,                  # short_vah_fade | long_val_fade | none
-        "va_edge_fade_active": confirmed,
+        # Poke status and rejection
+        "poke_status": active_setup,                   # short_vah_fade | long_val_fade | none
+        "rejection_active": confirmed,
         "confirmation_method": "2x5min" if confirmed else ("watching" if active_setup != "none" else "none"),
         "five_min_consec_inside": five_min_consec,
 
-        # Trade parameters
-        "entry_price": entry_price,
-        "stop_price": stop_price,                      # 2x ATR (NOT 0.5 ATR — dead zone)
-        "risk_pts": risk_pts,
-        "target_2r": target_2r,
-        "target_3r": target_3r,
-
-        # Alternate: limit order setup
-        "limit_entry_price": limit_entry,
-        "limit_stop_price": limit_stop,
-
         # Metadata
-        "short_bias_bonus": short_bias_bonus,          # SHORTS: 70% WR vs ~50% LONGS
-        "morning_window": morning_window,              # 10:00-11:00 best timing
-        "past_entry_cutoff": past_cutoff,
-        "confidence": confidence,
-        "note": "VA Edge Fade: SHORT at VAH poke=70% WR. 2x5min entry+2ATR stop. 0.5ATR trail=dead zone (avoid)."
+        "short_bias_bonus": short_bias_bonus,          # VAH pokes structurally more significant on NQ
+
+        "note": f"VA poke: VAH={len(vah_pokes)}, VAL={len(val_pokes)}, status={active_setup}, rejection={confirmed}"
     }
+
+
+# Keep old name as alias for backward compatibility during transition
+get_va_edge_fade = get_va_poke_analysis
 
 
 # ============================================================================

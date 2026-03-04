@@ -1,0 +1,514 @@
+{
+    "session_date": "2026-03-04",
+    "current_et_time": "10:25",
+    "premarket": {
+        "asia_high": 24803.5,
+        "asia_low": 24501.0,
+        "london_high": "not_available",
+        "london_low": "not_available",
+        "london_range": "not_available",
+        "overnight_high": "not_available",
+        "overnight_low": "not_available",
+        "overnight_range": "not_available",
+        "previous_day_high": 25011.0,
+        "previous_day_low": 24352.0,
+        "previous_week_high": 25494.75,
+        "previous_week_low": 24352.0,
+        "compression_flag": false,
+        "compression_ratio": 0.0,
+        "smt_preopen": "neutral"
+    },
+    "intraday": {
+        "ib": {
+            "ib_status": "partial",
+            "ib_high": 24617.75,
+            "ib_low": 24501.0,
+            "ib_range": 116.75,
+            "ib_mid": 24559.38,
+            "price_vs_ib": "lower_third_hug",
+            "price_vs_vwap": "below",
+            "current_close": 24503.75,
+            "current_open": 24511.5,
+            "current_high": 24513.25,
+            "current_low": 24501.0,
+            "current_volume": 129,
+            "current_vwap": 24648.63,
+            "ema20": 24531.48,
+            "ema50": 24551.38,
+            "ema200": 24585.74,
+            "rsi14": 26.84,
+            "atr14": 12.32,
+            "ib_atr_ratio": 9.48,
+            "ib_width_class": "extreme",
+            "extension_pts": 0.0,
+            "extension_direction": "none",
+            "extension_multiple": 0.0,
+            "note": "IB location + technical indicators + ATR regime from CSV (no lookahead)"
+        },
+        "wick_parade": {
+            "bullish_wick_parade_count": 20,
+            "bearish_wick_parade_count": 37,
+            "window_minutes": 60,
+            "note": "Counts in last 60 min – ≥6 bullish = long override (Rule #14), ≥6 bearish = short override"
+        },
+        "dpoc_migration": {
+            "migration_status": "pre_1030",
+            "note": "No post-IB data yet"
+        },
+        "volume_profile": {
+            "current_session": {
+                "poc": "not_available",
+                "vah": "not_available",
+                "val": "not_available",
+                "high": "not_available",
+                "low": "not_available",
+                "hvn_nodes": [],
+                "lvn_nodes": []
+            },
+            "previous_day": {
+                "poc": 24759.5,
+                "vah": 24850.0,
+                "val": 24512.75,
+                "high": 25011.0,
+                "low": 24352.0,
+                "hvn_nodes": [
+                    24759.5,
+                    24759.75,
+                    24760.0
+                ],
+                "lvn_nodes": [
+                    24714.5,
+                    24714.75,
+                    24848.25
+                ]
+            },
+            "previous_3_days": {
+                "poc": 24974.75,
+                "vah": 25091.5,
+                "val": 24665.25,
+                "high": 25101.0,
+                "low": 24352.0,
+                "hvn_nodes": [
+                    24974.75,
+                    24974.0,
+                    24975.25
+                ],
+                "lvn_nodes": [
+                    24711.5,
+                    24712.5,
+                    24713.0
+                ]
+            },
+            "previous_5_days": {
+                "poc": 24993.5,
+                "vah": 25099.5,
+                "val": 24545.5,
+                "high": 25494.75,
+                "low": 24352.0,
+                "hvn_nodes": [
+                    24993.5,
+                    24994.75,
+                    24992.0
+                ],
+                "lvn_nodes": [
+                    24711.5,
+                    24712.5,
+                    24713.0
+                ]
+            },
+            "previous_10_days": {
+                "poc": 24906.5,
+                "vah": 25089.5,
+                "val": 24752.0,
+                "high": 25494.75,
+                "low": 24352.0,
+                "hvn_nodes": [
+                    24906.5,
+                    25019.0,
+                    24906.75
+                ],
+                "lvn_nodes": [
+                    24754.75,
+                    24755.0,
+                    25089.25
+                ]
+            },
+            "note": "Volume profile (70% value area) + top HVN/LVN nodes. Current = up to snapshot time (no lookahead)"
+        },
+        "tpo_profile": {
+            "note": "pre_open"
+        },
+        "ninety_min_pd_arrays": {
+            "note": "90_min_not_started"
+        },
+        "fvg_detection": {
+            "daily_fvg": [],
+            "4h_fvg": [],
+            "1h_fvg": [],
+            "90min_fvg": [],
+            "15min_fvg": [
+                {
+                    "type": "bearish",
+                    "top": 24573.0,
+                    "bottom": 24524.25,
+                    "time": "2026-03-04 01:15"
+                }
+            ],
+            "5min_fvg": [
+                {
+                    "type": "bearish",
+                    "top": 24576.25,
+                    "bottom": 24558.5,
+                    "time": "2026-03-04 01:05"
+                },
+                {
+                    "type": "bearish",
+                    "top": 24535.75,
+                    "bottom": 24524.25,
+                    "time": "2026-03-04 01:15"
+                }
+            ],
+            "daily_bpr": [],
+            "4h_bpr": [],
+            "1h_bpr": [],
+            "90min_bpr": [],
+            "15min_bpr": [],
+            "5min_bpr": [],
+            "5min_engulfed": [],
+            "15min_engulfed": [],
+            "note": "Unfilled FVGs last 3-5 periods – bullish = discount zone, bearish = premium zone. BPR = opposing engulfing inversion. Engulfed = current FVG fully covers past opposite-type FVG."
+        },
+        "smt_detection": {
+            "note": "No RTH data for SMT detection",
+            "active_divergences": []
+        }
+    },
+    "market_structure": {
+        "or_analysis": {
+            "note": "Outside OR window (9:30-10:15)"
+        },
+        "prior_va_analysis": {
+            "previous_session_vah": 24850.0,
+            "previous_session_val": 24512.75,
+            "previous_session_poc": 24759.5,
+            "va_width": 337.25,
+            "current_open": 24597.0,
+            "current_high": 24617.75,
+            "current_low": 24501.0,
+            "current_close": 24503.75,
+            "gap_status": "inside_va",
+            "gap_direction": "none",
+            "gap_size_pts": 0.0,
+            "model_a_triggered": false,
+            "model_b_triggered": false,
+            "model_c_triggered": false,
+            "active_model": null,
+            "80p_setup_ready": false,
+            "80p_setup_type": "none",
+            "80p_confidence": 0,
+            "or_context": {
+                "or_playbook_viable": true,
+                "reason": "Opened inside previous VA — normal IB, OR candidate"
+            },
+            "tpo_va_alignment": "no_data",
+            "status": "complete",
+            "note": "Prior VA analysis: gap=inside_va, 80p_ready=False, model=none"
+        },
+        "ib_extension": {
+            "20p_triggered": false,
+            "20p_direction": "none",
+            "ib_complete": false,
+            "status": "ib_not_complete",
+            "note": "IB completes at 10:30 — 20P check begins post-IB"
+        },
+        "balance_type": {
+            "balance_type": "neutral",
+            "upper_probe_result": "none",
+            "lower_probe_result": "none",
+            "upper_probe_confidence": 0.0,
+            "lower_probe_confidence": 0.0,
+            "probe_order": "none",
+            "dominant_bias": "none",
+            "playbook_action": "WAIT_DUAL_SIDED",
+            "confidence": 0.0,
+            "skew": "neutral",
+            "skew_strength": 0.0,
+            "skew_factors": {
+                "vol_poc_vs_ib_mid": "at",
+                "tpo_poc_vs_ib_mid": "at",
+                "dpoc_direction": "flat",
+                "fattening_zone": "inside_va",
+                "close_position": "middle"
+            },
+            "seam_level": 0.0,
+            "seam_description": "No data",
+            "morph": {
+                "status": "none",
+                "morph_type": "none",
+                "morph_time_window": "am",
+                "morph_signals": [],
+                "morph_confidence": 0.0
+            },
+            "note": "Insufficient data"
+        },
+        "range_classification": {
+            "ib_range_classification": "TIGHT (<200pts)",
+            "ib_range_pts": 116.8,
+            "high_rejection": {
+                "tested": false,
+                "rejection_confidence": 0.0,
+                "pullback_type": "none",
+                "bars_tested": 0,
+                "bars_to_pullback": 999,
+                "pullback_magnitude_pts": 0.0,
+                "note": "No test data"
+            },
+            "low_rejection": {
+                "tested": false,
+                "rejection_confidence": 0.0,
+                "pullback_type": "none",
+                "bars_tested": 0,
+                "bars_to_pullback": 999,
+                "pullback_magnitude_pts": 0.0,
+                "note": "No test data"
+            },
+            "combined_confidence": 0.0,
+            "recommended_action": "FRAMEWORK",
+            "note": "Range analysis: TIGHT (<200pts) (117pts). High rejection 0.00, Low rejection 0.00. Action: FRAMEWORK"
+        },
+        "edge_zone": {
+            "delta_positive": false,
+            "note": "Delta not positive (selling pressure)"
+        },
+        "va_poke": {
+            "va_edge_fade_active": false,
+            "status": "no_rth_data"
+        }
+    },
+    "core_confluences": {
+        "note": "no_data_available",
+        "ib_acceptance": {
+            "close_above_ibh": false,
+            "close_below_ibl": false,
+            "price_accepted_higher": "No",
+            "price_accepted_lower": "No"
+        },
+        "dpoc_vs_ib": {
+            "dpoc_above_ibh": false,
+            "dpoc_below_ibl": false,
+            "dpoc_extreme_shift": "none"
+        },
+        "dpoc_compression": {
+            "compressing_against_vah": false,
+            "compressing_against_val": false,
+            "compression_bias": "none"
+        },
+        "price_location": {
+            "in_upper_third": false,
+            "in_lower_third": false,
+            "in_middle": false,
+            "location_label": "unknown"
+        },
+        "tpo_signals": {
+            "single_prints_above": false,
+            "single_prints_below": false,
+            "fattening_upper": false,
+            "fattening_lower": false
+        },
+        "migration": {
+            "significant_up": false,
+            "significant_down": false,
+            "net_direction": "flat",
+            "pts_since_1030": 0
+        }
+    },
+    "inference": {
+        "day_type": {
+            "type": "Neutral Range",
+            "timestamp": "2026-03-04 / 10:25"
+        },
+        "day_type_morph": "NA",
+        "trend_strength": "Weak",
+        "bias": "Neutral-Lower",
+        "value_acceptance": "NA",
+        "tpo_read": {
+            "profile_signals": "Symmetric build",
+            "dpoc_migration": "DPOC migration flat 0.0 pts",
+            "extreme_or_compression": "none"
+        },
+        "confidence": 50,
+        "day_type_reasoning": [
+            "Trend strength: Weak",
+            "Price in neutral lower: No momentum continuation — avoiding FOMO",
+            "Weak trend strength cap applied: Bias downgraded, confidence capped at 75%"
+        ],
+        "one_liner": "Neutral-Lower (weak trend, 50% confidence)"
+    },
+    "cri_readiness": {
+        "overall_status": "STAND_DOWN",
+        "posture": {
+            "state": "Stabilized",
+            "score": 3.5,
+            "signal": "Posture: Normal conditions"
+        },
+        "terrain": {
+            "classification": "A2",
+            "score": 2.0,
+            "key_signals": [
+                "Volatility: Low",
+                "Reclaim: Failed",
+                "Breath: Shallow",
+                "TRAP DETECTED: Bear Trap"
+            ],
+            "trap": {
+                "detected": true,
+                "type": "Bear Trap",
+                "bullish_wick_count": 20,
+                "bearish_wick_count": 37,
+                "score": 1.0,
+                "note": "Trap: Bear Trap (bullish wicks: 20, bearish wicks: 37)"
+            },
+            "component_scores": {
+                "volatility": 4.0,
+                "reclaim": 1.5,
+                "breath": 2.0,
+                "trap": 1.0
+            }
+        },
+        "identity": {
+            "permitted": "Squire",
+            "match": "Partial",
+            "trend_strength": "Weak",
+            "terrain_class": "A2",
+            "note": "Identity: Squire (Partial) - Terrain A2, Trend Weak"
+        },
+        "permission": {
+            "size_cap": "Flat",
+            "aggression": "No entry",
+            "note": "Permission: Flat size, No entry"
+        },
+        "reclaim": {
+            "state": "Failed",
+            "score": 1.5,
+            "clean_count": 0,
+            "hesitant_count": 0,
+            "failed_count": 1,
+            "key_summary": "Failed reclaim (0 clean, 0 hesitant, 1 failed)",
+            "reclaim_data": [
+                {
+                    "level": "IBH",
+                    "status": "failed_reclaim",
+                    "score": 1.0
+                },
+                {
+                    "level": "IBL",
+                    "status": "testing",
+                    "score": 2.0
+                }
+            ]
+        },
+        "volatility": {
+            "state": "Low",
+            "atr14": 12.32,
+            "ib_range": 116.75,
+            "atr_to_ib_ratio": 0.11,
+            "note": "Volatility Low: ATR/IB ratio 0.11"
+        },
+        "breath": {
+            "state": "Shallow",
+            "direction": "flat",
+            "velocity": 0,
+            "dpoc_regime": "",
+            "score": 2.0,
+            "note": "Breath Shallow: DPOC flat at 0.0 pts/30min"
+        },
+        "trap": {
+            "detected": true,
+            "type": "Bear Trap",
+            "bullish_wick_count": 20,
+            "bearish_wick_count": 37,
+            "score": 1.0,
+            "note": "Trap: Bear Trap (bullish wicks: 20, bearish wicks: 37)"
+        },
+        "danger_flags": [
+            "TRAP: Bear Trap"
+        ],
+        "readiness_summary": "STAND_DOWN - A2 terrain, Stabilized posture, reclaim Failed"
+    },
+    "playbook_setup": {
+        "matched_playbook": "Standby",
+        "bullish_setup": null,
+        "bearish_setup": null,
+        "rationale": [
+            "No clear playbook match: Permission denied (CRI: No entry)",
+            "Action: Observe market structure, wait for confirmation"
+        ],
+        "permission": {
+            "aggression": "Observe only",
+            "size_cap": "Flat",
+            "note": "Stand down - no valid setup"
+        }
+    },
+    "balance_classification": {
+        "balance_type": "neutral",
+        "upper_probe_result": "none",
+        "lower_probe_result": "none",
+        "upper_probe_confidence": 0.0,
+        "lower_probe_confidence": 0.0,
+        "probe_order": "none",
+        "dominant_bias": "none",
+        "playbook_action": "WAIT_DUAL_SIDED",
+        "confidence": 0.0,
+        "skew": "neutral",
+        "skew_strength": 0.0,
+        "skew_factors": {
+            "vol_poc_vs_ib_mid": "at",
+            "tpo_poc_vs_ib_mid": "at",
+            "dpoc_direction": "flat",
+            "fattening_zone": "inside_va",
+            "close_position": "middle"
+        },
+        "seam_level": 0.0,
+        "seam_description": "No data",
+        "morph": {
+            "status": "none",
+            "morph_type": "none",
+            "morph_time_window": "am",
+            "morph_signals": [],
+            "morph_confidence": 0.0
+        },
+        "note": "Insufficient data"
+    },
+    "mean_reversion": {
+        "ib_range_classification": "TIGHT (<200pts)",
+        "ib_range_pts": 116.8,
+        "high_rejection": {
+            "tested": false,
+            "rejection_confidence": 0.0,
+            "pullback_type": "none",
+            "bars_tested": 0,
+            "bars_to_pullback": 999,
+            "pullback_magnitude_pts": 0.0,
+            "note": "No test data"
+        },
+        "low_rejection": {
+            "tested": false,
+            "rejection_confidence": 0.0,
+            "pullback_type": "none",
+            "bars_tested": 0,
+            "bars_to_pullback": 999,
+            "pullback_magnitude_pts": 0.0,
+            "note": "No test data"
+        },
+        "combined_confidence": 0.0,
+        "recommended_action": "FRAMEWORK",
+        "note": "Range analysis: TIGHT (<200pts) (117pts). High rejection 0.00, Low rejection 0.00. Action: FRAMEWORK"
+    },
+    "or_reversal": {
+        "note": "Outside OR window (9:30-10:15)"
+    },
+    "edge_fade": {
+        "delta_positive": false,
+        "note": "Delta not positive (selling pressure)"
+    }
+}

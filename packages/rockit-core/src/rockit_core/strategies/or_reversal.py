@@ -52,8 +52,15 @@ def _find_closest_swept_level(
     candidates: List[Tuple[str, float]],
     sweep_threshold: float,
     eor_range: float,
+    direction: str = "high",
 ) -> Tuple[Optional[float], Optional[str]]:
-    """Find the closest swept level from candidates within threshold."""
+    """
+    Find the closest swept level from candidates that was actually breached.
+
+    A sweep requires price to EXCEED the level (Judas swing / liquidity grab):
+      - High sweep: eor_high >= level (price breached above)
+      - Low sweep: eor_low <= level (price breached below)
+    """
     best_level = None
     best_name = None
     best_dist = float('inf')
@@ -61,8 +68,13 @@ def _find_closest_swept_level(
     for name, lvl in candidates:
         if lvl is None:
             continue
+        # Require directional breach, not just proximity
+        if direction == "high" and eor_extreme < lvl:
+            continue
+        if direction == "low" and eor_extreme > lvl:
+            continue
         dist = abs(eor_extreme - lvl)
-        if dist < sweep_threshold and dist <= eor_range and dist < best_dist:
+        if dist < sweep_threshold and dist < best_dist:
             best_dist = dist
             best_level = lvl
             best_name = name
@@ -169,11 +181,11 @@ class OpeningRangeReversal(StrategyBase):
         if london_low:
             low_candidates.append(('LDN_LOW', london_low))
 
-        # Proximity-based sweep: pick CLOSEST level within threshold
+        # Sweep detection: pick CLOSEST level actually breached
         swept_high_level, swept_high_name = _find_closest_swept_level(
-            eor_high, high_candidates, sweep_threshold, eor_range)
+            eor_high, high_candidates, sweep_threshold, eor_range, direction="high")
         swept_low_level, swept_low_name = _find_closest_swept_level(
-            eor_low, low_candidates, sweep_threshold, eor_range)
+            eor_low, low_candidates, sweep_threshold, eor_range, direction="low")
 
         if swept_high_level is None and swept_low_level is None:
             return

@@ -84,13 +84,24 @@ def _has_bad_values(obj):
 # Required top-level keys in every snapshot
 REQUIRED_TOP_KEYS = [
     "session_date", "current_et_time", "premarket", "intraday",
-    "core_confluences", "inference", "cri_readiness", "playbook_setup",
+    "core_confluences", "inference", "market_structure",
 ]
 
 REQUIRED_INTRADAY_KEYS = [
     "ib", "volume_profile", "tpo_profile", "dpoc_migration",
-    "wick_parade", "fvg_detection", "globex_va_analysis",
-    "twenty_percent_rule", "va_edge_fade",
+    "wick_parade", "fvg_detection", "smt_detection",
+]
+
+REQUIRED_MARKET_STRUCTURE_KEYS = [
+    "or_analysis", "prior_va_analysis", "ib_extension",
+    "balance_type", "range_classification", "edge_zone", "va_poke",
+]
+
+# Trade signal keys that must NOT appear in market_structure (regression guard)
+FORBIDDEN_SIGNAL_KEYS = [
+    "entry", "stop", "target", "entry_price", "stop_price",
+    "target_price", "signal", "target_2r", "target_3r", "target_4r",
+    "risk_pts", "target_opposite_va", "rr", "reward",
 ]
 
 REQUIRED_CONFLUENCE_KEYS = [
@@ -188,13 +199,10 @@ class TestSingleDaySnapshot:
         assert "day_type" in inference
         assert "bias" in inference
 
-        # CRI should be populated
-        cri = snapshot.get("cri_readiness", {})
-        assert "status" not in cri or cri["status"] != "failed"
-
-        # Playbook should be populated
-        playbook = snapshot.get("playbook_setup", {})
-        assert "status" not in playbook or playbook["status"] != "failed"
+        # Market structure should be populated
+        ms = snapshot.get("market_structure", {})
+        assert isinstance(ms, dict)
+        assert len(ms) > 0
 
 
 # ===========================================================================
@@ -231,9 +239,26 @@ class TestModuleOutputStructure:
         expected = [
             "ib_high", "ib_low", "ib_range", "ib_status",
             "current_close", "rsi14", "atr14",
+            "ib_atr_ratio", "ib_width_class",
+            "extension_pts", "extension_direction", "extension_multiple",
         ]
         for key in expected:
             assert key in ib, f"Missing ib key: {key}"
+
+    def test_ib_width_class_valid(self, snapshot_1145):
+        """IB width class is one of the valid Dalton categories."""
+        ib = snapshot_1145["intraday"]["ib"]
+        assert ib["ib_width_class"] in ("narrow", "normal", "wide", "extreme", "unknown")
+        if ib["ib_width_class"] != "unknown":
+            assert isinstance(ib["ib_atr_ratio"], (int, float))
+            assert ib["ib_atr_ratio"] > 0
+
+    def test_extension_magnitude_valid(self, snapshot_1145):
+        """Extension magnitude fields have valid types."""
+        ib = snapshot_1145["intraday"]["ib"]
+        assert isinstance(ib["extension_pts"], (int, float))
+        assert ib["extension_direction"] in ("up", "down", "none")
+        assert isinstance(ib["extension_multiple"], (int, float))
 
     def test_volume_profile_keys(self, snapshot_1145):
         """Volume profile module has POC/VAH/VAL."""
@@ -243,6 +268,16 @@ class TestModuleOutputStructure:
         cs = vp.get("current_session", vp)
         for key in ["poc", "vah", "val"]:
             assert key in cs, f"Missing volume_profile key: {key}"
+
+    def test_volume_profile_composites(self, snapshot_1145):
+        """Volume profile has 5-day and 10-day composite profiles."""
+        vp = snapshot_1145["intraday"]["volume_profile"]
+        for period in ["previous_5_days", "previous_10_days"]:
+            assert period in vp, f"Missing volume_profile key: {period}"
+            profile = vp[period]
+            assert isinstance(profile, dict)
+            for key in ["poc", "vah", "val"]:
+                assert key in profile, f"Missing {period}.{key}"
 
     def test_tpo_profile_keys(self, snapshot_1145):
         """TPO profile module outputs expected keys."""
@@ -274,36 +309,78 @@ class TestModuleOutputStructure:
         for key in expected:
             assert key in inf, f"Missing inference key: {key}"
 
-    def test_cri_readiness_keys(self, snapshot_1145):
-        """CRI readiness outputs expected keys (or graceful failure)."""
-        cri = snapshot_1145["cri_readiness"]
-        # Either has real data or a graceful error
-        assert isinstance(cri, dict)
-        if cri.get("status") != "failed":
-            for key in ["terrain", "identity", "permission"]:
-                assert key in cri, f"Missing cri key: {key}"
+    def test_market_structure_keys(self, snapshot_1145):
+        """Market structure section has all required sub-dicts."""
+        ms = snapshot_1145["market_structure"]
+        assert isinstance(ms, dict)
+        for key in REQUIRED_MARKET_STRUCTURE_KEYS:
+            assert key in ms, f"Missing market_structure key: {key}"
+            assert isinstance(ms[key], dict), f"market_structure[{key}] should be dict"
 
-    def test_playbook_setup(self, snapshot_1145):
-        """Playbook engine produces a dict output."""
-        pb = snapshot_1145["playbook_setup"]
-        assert isinstance(pb, dict)
-
-    def test_globex_va_analysis_keys(self, snapshot_1145):
-        """Globex VA analysis outputs expected keys."""
-        gva = snapshot_1145["intraday"]["globex_va_analysis"]
+    def test_prior_va_analysis_keys(self, snapshot_1145):
+        """Prior VA analysis outputs expected keys."""
+        gva = snapshot_1145["market_structure"]["prior_va_analysis"]
         assert isinstance(gva, dict)
-        # Should have signal or previous session data
         assert len(gva) > 0
 
-    def test_twenty_percent_rule_keys(self, snapshot_1145):
-        """20% rule module outputs expected keys."""
-        tpr = snapshot_1145["intraday"]["twenty_percent_rule"]
+    def test_ib_extension_keys(self, snapshot_1145):
+        """IB extension module outputs expected keys."""
+        tpr = snapshot_1145["market_structure"]["ib_extension"]
         assert isinstance(tpr, dict)
 
-    def test_va_edge_fade_keys(self, snapshot_1145):
-        """VA edge fade module outputs expected keys."""
-        vef = snapshot_1145["intraday"]["va_edge_fade"]
+    def test_va_poke_keys(self, snapshot_1145):
+        """VA poke module outputs expected keys."""
+        vef = snapshot_1145["market_structure"]["va_poke"]
         assert isinstance(vef, dict)
+
+    def test_smt_detection_keys(self, snapshot_1145):
+        """SMT detection module outputs expected keys."""
+        smt = snapshot_1145["intraday"]["smt_detection"]
+        assert isinstance(smt, dict)
+        assert "active_divergences" in smt
+        assert isinstance(smt["active_divergences"], list)
+        assert "note" in smt
+
+    def test_smt_detection_with_es_ym(self, snapshot_1145):
+        """SMT detection has level-specific keys when ES/YM available."""
+        smt = snapshot_1145["intraday"]["smt_detection"]
+        # These keys should always be present when ES/YM data is provided
+        for key in ["smt_at_session_high", "smt_at_session_low"]:
+            assert key in smt, f"Missing smt key: {key}"
+
+    def test_ib_extension_profile_context(self, snapshot_1145):
+        """IB extension module has volume/TPO acceptance context."""
+        ext = snapshot_1145["market_structure"]["ib_extension"]
+        assert isinstance(ext, dict)
+        # These keys may only be present when 20P triggers (post-IB with enough bars)
+        if ext.get("ib_complete") and ext.get("ib_filter_pass") and ext.get("bars_post_ib", 0) >= 3:
+            for key in ["volume_accepted", "vol_poc_location", "tpo_accepted", "tpo_poc_location"]:
+                assert key in ext, f"Missing ib_extension key: {key}"
+
+    def test_prior_va_tpo_alignment(self, snapshot_1145):
+        """Prior VA analysis has TPO cross-reference."""
+        gva = snapshot_1145["market_structure"]["prior_va_analysis"]
+        assert isinstance(gva, dict)
+        if gva.get("status") == "complete":
+            assert "tpo_va_alignment" in gva
+            assert gva["tpo_va_alignment"] in ("inside_prior_va", "extending_beyond", "no_data")
+
+    def test_no_trade_signals_in_market_structure(self, snapshot_1145):
+        """Regression guard: no trade signals leak into market_structure."""
+        ms = snapshot_1145["market_structure"]
+
+        def _check_no_signals(obj, path="market_structure"):
+            if isinstance(obj, dict):
+                for key, val in obj.items():
+                    assert key not in FORBIDDEN_SIGNAL_KEYS, (
+                        f"Forbidden signal key '{key}' found at {path}.{key}"
+                    )
+                    _check_no_signals(val, f"{path}.{key}")
+            elif isinstance(obj, list):
+                for i, val in enumerate(obj):
+                    _check_no_signals(val, f"{path}[{i}]")
+
+        _check_no_signals(ms)
 
 
 # ===========================================================================
@@ -462,3 +539,246 @@ class TestErrorHandling:
                 "current_time": "11:45",
                 "csv_paths": {"nq": "/nonexistent/path.csv"},
             })
+
+
+# ===========================================================================
+# Class 6: TestSMTDetection — Cross-market divergence detection
+# ===========================================================================
+
+
+class TestSMTDetection:
+    """Test SMT detection module independently and within orchestrator."""
+
+    def test_smt_no_es_ym_graceful(self):
+        """SMT without ES/YM returns graceful degradation."""
+        config = _make_config(LATEST_SESSION, "11:45", include_es_ym=False)
+        snapshot = generate_snapshot(config)
+        smt = snapshot["intraday"]["smt_detection"]
+        assert isinstance(smt, dict)
+        assert "active_divergences" in smt
+        assert isinstance(smt["active_divergences"], list)
+
+    def test_smt_with_es_ym(self):
+        """SMT with ES/YM data produces level-specific divergence checks."""
+        config = _make_config(LATEST_SESSION, "11:45", include_es_ym=True)
+        snapshot = generate_snapshot(config)
+        smt = snapshot["intraday"]["smt_detection"]
+        assert isinstance(smt, dict)
+        assert "smt_at_session_high" in smt
+        assert "smt_at_session_low" in smt
+        # All divergence values should be valid strings
+        valid_values = {
+            "bearish_divergence", "bullish_divergence", "confirmed",
+            "no_test", "no_ib_data", "no_data"
+        }
+        for key, val in smt.items():
+            if key.startswith("smt_at_"):
+                assert val in valid_values, f"Invalid SMT value for {key}: {val}"
+
+    @pytest.mark.parametrize("current_time", ["10:35", "12:00", "14:00"])
+    def test_smt_at_multiple_times(self, current_time):
+        """SMT detection works at various post-IB times."""
+        config = _make_config(LATEST_SESSION, current_time, include_es_ym=True)
+        snapshot = generate_snapshot(config)
+        smt = snapshot["intraday"]["smt_detection"]
+        assert isinstance(smt, dict)
+        assert "active_divergences" in smt
+
+    def test_smt_early_session(self):
+        """SMT at early time (pre-RTH) returns empty or graceful output."""
+        config = _make_config(LATEST_SESSION, "09:00", include_es_ym=True)
+        snapshot = generate_snapshot(config)
+        smt = snapshot["intraday"]["smt_detection"]
+        assert isinstance(smt, dict)
+
+
+# ===========================================================================
+# Class 7: TestBalanceSkewMorph — Balance skew classification + morph detection
+# ===========================================================================
+
+
+class TestBalanceSkewMorph:
+    """Test balance day skew classification, seam level, and morph detection."""
+
+    @pytest.fixture(scope="class")
+    def snapshot_1145(self):
+        """Snapshot at 11:45 — post-IB, pre-PM morph window."""
+        clear_global_cache()
+        config = _make_config(LATEST_SESSION, "11:45", include_es_ym=True)
+        return generate_snapshot(config)
+
+    @pytest.fixture(scope="class")
+    def snapshot_1400(self):
+        """Snapshot at 14:00 — PM prime morph window."""
+        clear_global_cache()
+        config = _make_config(LATEST_SESSION, "14:00", include_es_ym=True)
+        return generate_snapshot(config)
+
+    @pytest.fixture(scope="class")
+    def snapshot_1530(self):
+        """Snapshot at 15:30 — PM late morph window."""
+        clear_global_cache()
+        config = _make_config(LATEST_SESSION, "15:30", include_es_ym=True)
+        return generate_snapshot(config)
+
+    # --- Skew fields ---
+
+    def test_skew_fields_present(self, snapshot_1145):
+        """Balance type has skew, skew_strength, and skew_factors."""
+        bt = snapshot_1145["market_structure"]["balance_type"]
+        assert "skew" in bt, "Missing skew field"
+        assert "skew_strength" in bt, "Missing skew_strength field"
+        assert "skew_factors" in bt, "Missing skew_factors field"
+
+    def test_skew_valid_values(self, snapshot_1145):
+        """Skew is one of bullish/bearish/neutral."""
+        bt = snapshot_1145["market_structure"]["balance_type"]
+        assert bt["skew"] in ("bullish", "bearish", "neutral")
+
+    def test_skew_strength_range(self, snapshot_1145):
+        """Skew strength is between 0.0 and 1.0."""
+        bt = snapshot_1145["market_structure"]["balance_type"]
+        assert 0.0 <= bt["skew_strength"] <= 1.0
+
+    def test_skew_factors_keys(self, snapshot_1145):
+        """Skew factors has all expected sub-keys."""
+        sf = snapshot_1145["market_structure"]["balance_type"]["skew_factors"]
+        expected_keys = [
+            "vol_poc_vs_ib_mid", "tpo_poc_vs_ib_mid", "dpoc_direction",
+            "fattening_zone", "close_position",
+        ]
+        for key in expected_keys:
+            assert key in sf, f"Missing skew_factors key: {key}"
+
+    def test_skew_factors_valid_values(self, snapshot_1145):
+        """Skew factor values are valid enum strings."""
+        sf = snapshot_1145["market_structure"]["balance_type"]["skew_factors"]
+        assert sf["vol_poc_vs_ib_mid"] in ("above", "below", "at")
+        assert sf["tpo_poc_vs_ib_mid"] in ("above", "below", "at")
+        assert sf["dpoc_direction"] in ("up", "down", "flat")
+        assert sf["fattening_zone"] in ("above_vah", "at_vah", "inside_va", "at_val", "below_val")
+        assert sf["close_position"] in ("upper_third", "middle", "lower_third")
+
+    # --- Seam level ---
+
+    def test_seam_level_present(self, snapshot_1145):
+        """Seam level is a numeric value."""
+        bt = snapshot_1145["market_structure"]["balance_type"]
+        assert "seam_level" in bt
+        assert isinstance(bt["seam_level"], (int, float))
+
+    def test_seam_level_reasonable(self, snapshot_1145):
+        """Seam level is within IB range (sanity check)."""
+        bt = snapshot_1145["market_structure"]["balance_type"]
+        ib = snapshot_1145["intraday"]["ib"]
+        seam = bt["seam_level"]
+        ib_high = ib.get("ib_high")
+        ib_low = ib.get("ib_low")
+        if ib_high and ib_low and seam > 0:
+            # Seam should be within a generous range of IB
+            ib_range = ib_high - ib_low
+            assert ib_low - ib_range <= seam <= ib_high + ib_range, \
+                f"Seam {seam} is outside reasonable range [{ib_low - ib_range}, {ib_high + ib_range}]"
+
+    def test_seam_description_present(self, snapshot_1145):
+        """Seam description is a non-empty string."""
+        bt = snapshot_1145["market_structure"]["balance_type"]
+        assert "seam_description" in bt
+        assert isinstance(bt["seam_description"], str)
+        assert len(bt["seam_description"]) > 0
+
+    # --- Morph detection ---
+
+    def test_morph_fields_present(self, snapshot_1145):
+        """Balance type has morph dict with expected keys."""
+        morph = snapshot_1145["market_structure"]["balance_type"]["morph"]
+        assert isinstance(morph, dict)
+        for key in ["status", "morph_type", "morph_time_window", "morph_signals", "morph_confidence"]:
+            assert key in morph, f"Missing morph key: {key}"
+
+    def test_morph_status_valid(self, snapshot_1145):
+        """Morph status is one of none/developing/confirmed."""
+        morph = snapshot_1145["market_structure"]["balance_type"]["morph"]
+        assert morph["status"] in ("none", "developing", "confirmed")
+
+    def test_morph_type_valid(self, snapshot_1145):
+        """Morph type is a valid enum."""
+        morph = snapshot_1145["market_structure"]["balance_type"]["morph"]
+        valid_types = ("none", "neutral_to_bullish", "neutral_to_bearish", "to_trend_up", "to_trend_down")
+        assert morph["morph_type"] in valid_types
+
+    def test_morph_confidence_range(self, snapshot_1145):
+        """Morph confidence is between 0.0 and 1.0."""
+        morph = snapshot_1145["market_structure"]["balance_type"]["morph"]
+        assert 0.0 <= morph["morph_confidence"] <= 1.0
+
+    def test_morph_signals_is_list(self, snapshot_1145):
+        """Morph signals is a list of strings."""
+        morph = snapshot_1145["market_structure"]["balance_type"]["morph"]
+        assert isinstance(morph["morph_signals"], list)
+        for s in morph["morph_signals"]:
+            assert isinstance(s, str)
+
+    def test_morph_inactive_before_noon(self, snapshot_1145):
+        """At 11:45, morph should be in AM window (inactive or none)."""
+        morph = snapshot_1145["market_structure"]["balance_type"]["morph"]
+        assert morph["morph_time_window"] == "am"
+        assert morph["status"] == "none"
+
+    def test_morph_active_pm_prime(self, snapshot_1400):
+        """At 14:00, morph window should be pm_prime."""
+        morph = snapshot_1400["market_structure"]["balance_type"]["morph"]
+        assert morph["morph_time_window"] == "pm_prime"
+
+    def test_morph_active_pm_late(self, snapshot_1530):
+        """At 15:30, morph window should be pm_late."""
+        morph = snapshot_1530["market_structure"]["balance_type"]["morph"]
+        assert morph["morph_time_window"] == "pm_late"
+
+    def test_morph_confidence_matches_status(self, snapshot_1400):
+        """Morph confidence aligns with status classification."""
+        morph = snapshot_1400["market_structure"]["balance_type"]["morph"]
+        if morph["status"] == "none":
+            assert morph["morph_confidence"] < 0.30
+        elif morph["status"] == "developing":
+            assert 0.30 <= morph["morph_confidence"] <= 0.60
+        elif morph["status"] == "confirmed":
+            assert morph["morph_confidence"] > 0.60
+
+    # --- Cross-time consistency ---
+
+    @pytest.mark.parametrize("current_time", ["10:35", "11:45", "13:00", "14:00", "15:30"])
+    def test_skew_morph_at_all_times(self, current_time):
+        """Skew + morph fields are present and valid at all post-IB times."""
+        clear_global_cache()
+        config = _make_config(LATEST_SESSION, current_time)
+        snapshot = generate_snapshot(config)
+        bt = snapshot["market_structure"]["balance_type"]
+
+        # Skew fields always present
+        assert bt["skew"] in ("bullish", "bearish", "neutral")
+        assert 0.0 <= bt["skew_strength"] <= 1.0
+        assert isinstance(bt["skew_factors"], dict)
+        assert isinstance(bt["seam_level"], (int, float))
+
+        # Morph fields always present
+        morph = bt["morph"]
+        assert morph["status"] in ("none", "developing", "confirmed")
+        assert 0.0 <= morph["morph_confidence"] <= 1.0
+
+    # --- Multi-day consistency ---
+
+    @pytest.mark.parametrize("session_date", RECENT_SESSIONS[:3])
+    def test_skew_morph_multi_day(self, session_date):
+        """Skew + morph fields present across multiple trading days."""
+        clear_global_cache()
+        config = _make_config(session_date, "14:00")
+        snapshot = generate_snapshot(config)
+        bt = snapshot["market_structure"]["balance_type"]
+
+        assert "skew" in bt
+        assert "skew_strength" in bt
+        assert "skew_factors" in bt
+        assert "seam_level" in bt
+        assert "morph" in bt
+        assert bt["morph"]["morph_time_window"] == "pm_prime"

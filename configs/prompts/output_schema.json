@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ROCKIT LLM Output",
+  "description": "Output schema for ROCKIT market analysis. Shared by training pair generation and live inference. Sections not yet active based on current_et_time should use 'NA — [reason]' strings.",
+  "type": "object",
+  "required": [
+    "thinking",
+    "premarket_read",
+    "or_play",
+    "ib_read",
+    "day_type_call",
+    "strategy_assessment",
+    "value_area_play",
+    "tpo_remarks",
+    "evolution",
+    "evidence",
+    "what_could_go_wrong",
+    "one_liner",
+    "discipline"
+  ],
+  "properties": {
+    "thinking": {
+      "description": "Step-by-step reasoning chain. Each step must reference specific snapshot data with actual numbers.",
+      "type": "object",
+      "required": [
+        "step_1_context",
+        "step_2_structure",
+        "step_3_flow",
+        "step_4_levels",
+        "step_5_day_type",
+        "step_6_setups",
+        "step_7_risk"
+      ],
+      "properties": {
+        "step_1_context": {
+          "type": "string",
+          "description": "Where are we relative to prior value? Reference gap_status, overnight range, prior VA, compression_flag."
+        },
+        "step_2_structure": {
+          "type": "string",
+          "description": "IB read: reference ib_range, ib_width_class, ib_atr_ratio, extension_pts/direction/multiple. 'NA — IB not yet formed' before 9:30."
+        },
+        "step_3_flow": {
+          "type": "string",
+          "description": "Order flow: reference dpoc_regime, net_migration_pts, avg_velocity, accelerating/decelerating, tpo fattening_zone. Explain what the regime means. 'NA — awaiting IB completion' before 10:30."
+        },
+        "step_4_levels": {
+          "type": "string",
+          "description": "Key levels in play: name 2-3 nearest levels with exact price and distance from current_close. Include HVN/LVN nodes if near price."
+        },
+        "step_5_day_type": {
+          "type": "string",
+          "description": "Day type evidence: reference inference.day_type.type AND explain WHY with 3-4 bullets linking snapshot data to the classification definition. 'NA — IB not complete' before 10:30."
+        },
+        "step_6_setups": {
+          "type": "string",
+          "description": "Active/potential setups: check or_reversal.signal, edge_fade.signal, balance_classification.playbook_action, mean_reversion.trade_setup_*. Cite backtest WR/PF for each. 'NA — IB not complete' before 10:30."
+        },
+        "step_7_risk": {
+          "type": "string",
+          "description": "Risk check: CRI overall_status + which component scores drove it (terrain, breath, reclaim, trap). Position sizing recommendation. What invalidates the thesis. 'NA — CRI not computed' before 10:30."
+        }
+      },
+      "additionalProperties": false
+    },
+    "premarket_read": {
+      "type": "string",
+      "description": "Opening context: inside/above/below prior VA (VAH/VAL prices), overnight range, compression status, nearest 2-3 levels with distance. Always active."
+    },
+    "or_play": {
+      "type": "string",
+      "description": "Opening range assessment: OR Reversal signal status (64.4% WR if LONG/SHORT), sweep detection, drive classification, OR Acceptance status. 'NA — pre-market' before 9:30."
+    },
+    "ib_read": {
+      "type": "string",
+      "description": "IB interpretation: range pts, width_class vs ATR ratio, inside/outside prior VA, day type probability implication. For partial IB, note what's developing. 'NA — OR still forming' before 10:00."
+    },
+    "day_type_call": {
+      "description": "Day type analysis with evidence chain and skew assessment.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Use 'NA — IB not complete' before 10:30."
+        },
+        {
+          "type": "object",
+          "required": [
+            "classification",
+            "evidence",
+            "confidence_breakdown",
+            "skew",
+            "morph_watch"
+          ],
+          "properties": {
+            "classification": {
+              "type": "string",
+              "description": "Day type FROM inference.day_type.type (reference only, never override). One of: Trend Up, Trend Down, Open Drive, Open Auction, Double Distribution, Neutral Range, Balance."
+            },
+            "evidence": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 2,
+              "maxItems": 5,
+              "description": "Evidence bullets citing specific snapshot data. Must include: DPOC regime bullet, 30/60-min TPO acceptance check, trend strength (if Trend day), balance fade oath (if Balance/Neutral Range)."
+            },
+            "confidence_breakdown": {
+              "type": "string",
+              "description": "Explain inference.confidence score: which factors pushed it up/down. E.g., 'IB acceptance +15%, Weak trend cap -25%, DPOC fading -10% = 55%. Moderate conviction, half size.'"
+            },
+            "skew": {
+              "type": "string",
+              "description": "For Balance/Neutral Range: reference balance_classification.skew (bullish/bearish/neutral) + skew_strength + seam_level. For Trend days: 'N/A — trend day'."
+            },
+            "morph_watch": {
+              "type": "string",
+              "description": "Reference balance_classification.morph.status and inference.day_type_morph. What level + time confirms/denies a morph."
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "strategy_assessment": {
+      "description": "Assessment of all active/relevant strategy signals from the snapshot.",
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Use 'NA — pre-IB' before 10:00."
+        },
+        {
+          "type": "object",
+          "required": [
+            "or_reversal",
+            "or_acceptance",
+            "eighty_percent",
+            "twenty_percent",
+            "b_day",
+            "edge_fade",
+            "mean_reversion"
+          ],
+          "properties": {
+            "or_reversal": {
+              "type": "string",
+              "description": "or_reversal.signal status + quality assessment if active. Cite 64.4% WR, 2.96 PF. 'Outside window' if past 10:15."
+            },
+            "or_acceptance": {
+              "type": "string",
+              "description": "3×5-min acceptance above/below OR — is this developing or confirmed? Cite 59.9% WR, 1.46 PF."
+            },
+            "eighty_percent": {
+              "type": "string",
+              "description": "80P Rule: Is price outside prior VA and accepting back? Reference VA width, 50% depth target. Cite 42.3% WR, 1.74 PF. 'No entry after 13:00'."
+            },
+            "twenty_percent": {
+              "type": "string",
+              "description": "20P IB Extension: Is IB extension developing? 3×5-min acceptance outside IB extreme? Reference extension_pts and direction."
+            },
+            "b_day": {
+              "type": "string",
+              "description": "B-Day IBL Fade: Is balance_classification showing b-type? 30-bar acceptance inside IB? VWAP vs IB mid? Cite 46.4% WR, 1.47 PF."
+            },
+            "edge_fade": {
+              "type": "string",
+              "description": "edge_fade.signal status. IB edge rejection pattern? Active 10:00-13:30 only."
+            },
+            "mean_reversion": {
+              "type": "string",
+              "description": "mean_reversion setup status. WARNING: 42.6% WR, 0.91 PF — LOSING strategy. Flag unreliable."
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "value_area_play": {
+      "type": "string",
+      "description": "80P/20P/rotation assessment: where is price vs prior VA? Acceptance status. If 80P in play, cite target at 50% VA depth. 'NA — IB not complete' before 10:30."
+    },
+    "tpo_remarks": {
+      "type": "string",
+      "description": "Profile shape interpretation: fattening location (bullish/bearish acceptance), single prints (rejection), DPOC migration narrative, extreme/compression status. 'NA — insufficient TPO data' before 10:00."
+    },
+    "evolution": {
+      "type": "string",
+      "description": "Session evolution tracking: Is bias strengthening or weakening? DPOC accelerating or decelerating? Confidence rising or falling? CRI improving or degrading? Which strategy windows just opened/closed? 'NA — first snapshot' for earliest reading."
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "maxItems": 5,
+      "description": "3-5 specific observations grounded in snapshot data with exact numbers. Strategy references must include backtest WR/PF."
+    },
+    "what_could_go_wrong": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "maxItems": 3,
+      "description": "Failure scenarios with specific trigger conditions and levels."
+    },
+    "one_liner": {
+      "type": "string",
+      "maxLength": 140,
+      "description": "High-conviction trader voice: day type + strength + key action + primary level. Include strength note (e.g., 'Moderate Trend Up on 30-min hold + 0.7x extension = Bullish pyramid'). Max ~25 words."
+    },
+    "discipline": {
+      "type": "string",
+      "description": "Position size recommendation (Lanto model + CRI permission), risk reminder, after-13:00 cutoff if applicable. E.g., 'CRI PROBE_ONLY: 2 MNQ max. Weak trend = scalp only. One loss today — next loss = done.'"
+    }
+  },
+  "additionalProperties": false
+}

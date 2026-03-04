@@ -88,9 +88,9 @@ MODULE_EXPECTATIONS = [
     ("intraday.ib", ["ib_high", "ib_low", "ib_range", "current_close", "atr14"],
      10 * 60 + 30, "full IB data"),
 
-    # Volume profile: available from RTH open
-    ("intraday.volume_profile", ["current_session"], 9 * 60 + 35,
-     "volume profile"),
+    # Volume profile: available from RTH open (includes 5/10-day composites)
+    ("intraday.volume_profile", ["current_session", "previous_5_days", "previous_10_days"],
+     9 * 60 + 35, "volume profile"),
 
     # TPO profile: needs ~30 min of data
     ("intraday.tpo_profile", ["current_poc", "current_vah", "current_val", "tpo_shape"],
@@ -108,18 +108,24 @@ MODULE_EXPECTATIONS = [
     # Inference: needs core confluences
     ("inference", ["day_type", "bias"], 10 * 60 + 30, "inference engine"),
 
-    # CRI: needs intraday + premarket data
-    ("cri_readiness", ["terrain", "identity", "permission"],
-     10 * 60 + 30, "CRI readiness"),
+    # SMT detection: needs ES/YM data + RTH bars
+    ("intraday.smt_detection", ["active_divergences"], 9 * 60 + 35,
+     "SMT detection"),
 
-    # Globex VA: always available (uses prior session)
-    ("intraday.globex_va_analysis", [], 0, "globex VA analysis"),
+    # IB enhanced: width class + extension magnitude (post-IB)
+    ("intraday.ib", ["ib_atr_ratio", "ib_width_class", "extension_pts",
+                      "extension_direction", "extension_multiple"],
+     10 * 60 + 30, "IB width class + extension magnitude"),
 
-    # 20% rule: needs IB data
-    ("intraday.twenty_percent_rule", [], 10 * 60 + 30, "20% rule"),
+    # Market structure modules (registry-based)
+    ("market_structure.prior_va_analysis", [], 0, "prior VA analysis"),
+    ("market_structure.ib_extension", [], 10 * 60 + 30, "IB extension"),
+    ("market_structure.va_poke", [], 10 * 60 + 30, "VA poke analysis"),
 
-    # VA edge fade: needs prior session VA
-    ("intraday.va_edge_fade", [], 10 * 60 + 30, "VA edge fade"),
+    # Balance type skew + morph (post-IB)
+    ("market_structure.balance_type", ["skew", "skew_strength", "skew_factors",
+                                        "seam_level", "seam_description", "morph"],
+     10 * 60 + 30, "balance type skew + morph"),
 ]
 
 
@@ -132,7 +138,7 @@ def validate_line(snap, line_num):
     prefix = f"L{line_num} ({time_str})"
 
     # 1. Required top-level keys (always)
-    for key in ["session_date", "current_et_time", "premarket", "intraday", "core_confluences"]:
+    for key in ["session_date", "current_et_time", "premarket", "intraday", "core_confluences", "market_structure"]:
         if key not in snap:
             issues.append(("ERROR", f"{prefix}: missing top-level key '{key}'"))
 
@@ -144,8 +150,7 @@ def validate_line(snap, line_num):
 
     # 3. Module population — check for error stubs
     for mod in ["premarket", "intraday", "core_confluences", "inference",
-                "cri_readiness", "playbook_setup", "mean_reversion",
-                "or_reversal", "edge_fade"]:
+                "market_structure"]:
         val = snap.get(mod)
         if is_error_stub(val):
             issues.append(("ERROR", f"{prefix}: {mod} FAILED: {val.get('error', '?')[:80]}"))

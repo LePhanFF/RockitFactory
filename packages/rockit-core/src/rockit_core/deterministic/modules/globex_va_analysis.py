@@ -23,15 +23,19 @@ from typing import Dict, Optional
 from datetime import datetime, timedelta
 
 
-def get_globex_va_analysis(
+def get_prior_va_analysis(
     df_extended: pd.DataFrame,
     df_current: pd.DataFrame,
     current_time_str: str = "11:45",
     session_date: str = None,
+    tpo_profile: dict = None,
     **kwargs
 ) -> Dict:
     """
-    Analyze previous session ETH Value Area and detect 80P mean reversion setup.
+    Analyze previous session ETH Value Area, gap status, and acceptance models.
+
+    Market structure module: Detects prior session VA levels, gap classification,
+    and acceptance/rejection patterns. Pure observation — no trade signals.
 
     Args:
         df_extended: Full historical data including prior sessions + overnight
@@ -40,7 +44,7 @@ def get_globex_va_analysis(
         session_date: Current session date string
 
     Returns:
-        Complete 80P analysis with entry models, confidence, and playbook
+        Prior VA levels, gap status, acceptance model triggers, confidence
     """
 
     if not session_date:
@@ -125,37 +129,6 @@ def get_globex_va_analysis(
     any_model_triggered = model_a_triggered or model_b_triggered or model_c_triggered
     eighty_p_setup = opened_outside_va and any_model_triggered
 
-    # =========================================================================
-    # STEP 4: Entry/Stop/Target for best model (Limit 50% VA as default)
-    # =========================================================================
-
-    if opened_outside_va:
-        # Stop: VA edge + 10pt (fixed, based on research)
-        if gap_status == "above_vah":
-            stop_price = round(previous_vah + 10, 2)
-        else:
-            stop_price = round(previous_val - 10, 2)
-
-        # Entry price depends on model
-        entry_price = model_b_limit_price or model_a_entry_price or current_close
-        if entry_price:
-            risk_pts = abs(entry_price - stop_price)
-            target_2r = round(entry_price - (2 * risk_pts), 2) if gap_status == "above_vah" else round(entry_price + (2 * risk_pts), 2)
-            target_4r = round(entry_price - (4 * risk_pts), 2) if gap_status == "above_vah" else round(entry_price + (4 * risk_pts), 2)
-            target_opposite_va = round(previous_val, 2) if gap_status == "above_vah" else round(previous_vah, 2)
-        else:
-            risk_pts = None
-            target_2r = None
-            target_4r = None
-            target_opposite_va = round(previous_val, 2) if gap_status == "above_vah" else round(previous_vah, 2)
-    else:
-        stop_price = None
-        entry_price = None
-        risk_pts = None
-        target_2r = None
-        target_4r = None
-        target_opposite_va = None
-
     # 80P confidence score
     confidence = _compute_80p_confidence(
         gap_status, any_model_triggered, model_a_triggered,
@@ -172,6 +145,15 @@ def get_globex_va_analysis(
 
     # OR context (mutually exclusive with 80P)
     or_context = _evaluate_or_context(gap_status, opened_outside_va, eighty_p_setup)
+
+    # TPO cross-reference: check if TPO VA aligns with volume VA
+    tpo_va_alignment = "no_data"
+    if tpo_profile and isinstance(tpo_profile, dict):
+        tpo_vah = tpo_profile.get("current_vah")
+        tpo_val = tpo_profile.get("current_val")
+        if isinstance(tpo_vah, (int, float)) and isinstance(tpo_val, (int, float)):
+            tpo_inside_prior_va = tpo_val >= previous_val and tpo_vah <= previous_vah
+            tpo_va_alignment = "inside_prior_va" if tpo_inside_prior_va else "extending_beyond"
 
     # =========================================================================
     # STEP 5: Active setup summary
@@ -191,7 +173,7 @@ def get_globex_va_analysis(
         "previous_session_vah": round(previous_vah, 2),
         "previous_session_val": round(previous_val, 2),
         "previous_session_poc": round(previous_poc, 2) if previous_poc else None,
-        "previous_session_va_width": round(previous_va_width, 2),
+        "va_width": round(previous_va_width, 2),
 
         # Today's price vs prior VA
         "current_open": round(current_open, 2),
@@ -199,12 +181,14 @@ def get_globex_va_analysis(
         "current_low": round(current_low, 2),
         "current_close": round(current_close, 2),
         "gap_status": gap_status,                    # above_vah | below_val | inside_va
-        "opened_outside_previous_va": opened_outside_va,
+        "gap_direction": "up" if gap_status == "above_vah" else ("down" if gap_status == "below_val" else "none"),
+        "gap_size_pts": round(abs(current_open - previous_vah), 2) if gap_status == "above_vah"
+                        else (round(abs(previous_val - current_open), 2) if gap_status == "below_val" else 0.0),
 
-        # Model triggers
+        # Model triggers (acceptance detection)
         "model_a_triggered": model_a_triggered,      # Acceptance close
-        "model_b_triggered": model_b_triggered,      # Limit 50% VA depth (best $/mo)
-        "model_c_triggered": model_c_triggered,      # 100% retest (best WR)
+        "model_b_triggered": model_b_triggered,      # 50% VA depth reached
+        "model_c_triggered": model_c_triggered,      # 100% retest (double top/bottom)
         "active_model": active_model,                # Highest priority model triggered
 
         # 80P setup state
@@ -212,20 +196,19 @@ def get_globex_va_analysis(
         "80p_setup_type": setup_type,
         "80p_confidence": confidence,
 
-        # Trade parameters (research-validated)
-        "entry_price": round(entry_price, 2) if entry_price else None,
-        "stop_price": stop_price,                    # VA edge + 10pt (CRITICAL: not candle)
-        "risk_pts": round(risk_pts, 1) if risk_pts else None,
-        "target_2r": target_2r,                      # Default: 2R (research engine default)
-        "target_4r": target_4r,                      # Aggressive: 4R (best $/mo with Model B)
-        "target_opposite_va": target_opposite_va,    # Alternate: opposite VA side
-
-        # OR context (mutually exclusive — if 80P fires, OR does not)
+        # OR context (mutually exclusive with 80P)
         "or_context": or_context,
 
+        # TPO cross-reference
+        "tpo_va_alignment": tpo_va_alignment,
+
         "status": "complete",
-        "note": "80P: VA edge+10pt stop is mandatory (candle stop = 5-14% WR catastrophe). Model B+4R=$1,922/mo. Model C+2R=65.7% WR."
+        "note": f"Prior VA analysis: gap={gap_status}, 80p_ready={eighty_p_setup}, model={active_model or 'none'}"
     }
+
+
+# Keep old name as alias for backward compatibility during transition
+get_globex_va_analysis = get_prior_va_analysis
 
 
 # ============================================================================

@@ -24,6 +24,7 @@ Rules implemented (in order):
 - Rule 7: DPOC Compression
 - Rule 11: Neutral-Upper/Lower Rules
 - Rule 13: Morph Status String
+- Rule 14: Balance Morph Bias Adjustment
 """
 
 from datetime import time, datetime
@@ -508,6 +509,71 @@ def rule_13_morph_status(snapshot: Dict[str, Any]) -> str:
 
 
 # ============================================================================
+# RULE 14: BALANCE MORPH BIAS ADJUSTMENT (25 lines)
+# ============================================================================
+
+def rule_14_balance_morph_bias(snapshot: Dict[str, Any], current_bias: str = "Flat",
+                                current_confidence: int = 50) -> Tuple[str, int, List[str]]:
+    """
+    Rule 14: Adjust bias/confidence when balance day morph is detected.
+
+    Reads market_structure.balance_type.morph and applies:
+    - morph confirmed neutral_to_bullish → bias += "Bullish", confidence += 10
+    - morph confirmed neutral_to_bearish → bias += "Bearish", confidence += 10
+    - morph confirmed to_trend_up → bias += "Very Bullish", confidence += 15
+    - morph confirmed to_trend_down → bias += "Very Bearish", confidence += 15
+    - morph developing → confidence += 5 (directional hint only)
+    - morph none → no change
+
+    Returns:
+    - Updated bias
+    - Confidence delta
+    - Reasoning bullets
+    """
+    market_structure = snapshot.get("market_structure", {})
+    balance_type_data = market_structure.get("balance_type", {})
+    morph = balance_type_data.get("morph", {})
+
+    morph_status = morph.get("status", "none")
+    morph_type = morph.get("morph_type", "none")
+    morph_confidence = morph.get("morph_confidence", 0.0)
+
+    reasoning = []
+    conf_delta = 0
+    bias_adjusted = current_bias
+
+    if morph_status == "none" or morph_type == "none":
+        return bias_adjusted, conf_delta, reasoning
+
+    morph_signals = morph.get("morph_signals", [])
+    signal_summary = ", ".join(morph_signals[:3]) if morph_signals else "no signals"
+
+    if morph_status == "confirmed":
+        if morph_type == "neutral_to_bullish":
+            bias_adjusted = "Bullish"
+            conf_delta = 10
+            reasoning.append(f"Balance morph CONFIRMED: neutral → bullish ({signal_summary})")
+        elif morph_type == "neutral_to_bearish":
+            bias_adjusted = "Bearish"
+            conf_delta = 10
+            reasoning.append(f"Balance morph CONFIRMED: neutral → bearish ({signal_summary})")
+        elif morph_type == "to_trend_up":
+            bias_adjusted = "Very Bullish"
+            conf_delta = 15
+            reasoning.append(f"Balance morph CONFIRMED: → trend up ({signal_summary})")
+        elif morph_type == "to_trend_down":
+            bias_adjusted = "Very Bearish"
+            conf_delta = 15
+            reasoning.append(f"Balance morph CONFIRMED: → trend down ({signal_summary})")
+    elif morph_status == "developing":
+        conf_delta = 5
+        direction = "bullish" if "bullish" in morph_type or "up" in morph_type else "bearish"
+        reasoning.append(f"Balance morph developing ({direction}, {morph_confidence:.0%} confidence): {signal_summary}")
+
+    return bias_adjusted, conf_delta, reasoning
+
+
+# ============================================================================
 # MAIN ENGINE: ORCHESTRATE ALL RULES
 # ============================================================================
 
@@ -540,6 +606,7 @@ def apply_inference_rules(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     6. Rule 7: DPOC Compression
     7. Rule 11: Neutral-Upper/Lower
     8. Rule 13: Morph Status String
+    9. Rule 14: Balance Morph Bias Adjustment
     """
     # Initialize
     bias = "Flat"
@@ -563,22 +630,27 @@ def apply_inference_rules(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     reasoning_bullets.extend(ib_reasoning)
 
     # Rule 6: DPOC Extreme Position (unless already overridden by IB acceptance)
+    conf_delta_extreme = 0
     if conf_delta_ib == 0:  # No IB acceptance override
         bias, conf_delta_extreme, extreme_reasoning = rule_6_dpoc_extreme_position(snapshot, bias)
         confidence += conf_delta_extreme
         reasoning_bullets.extend(extreme_reasoning)
 
     # Rule 7: DPOC Compression (unless already overridden)
+    conf_delta_comp = 0
     if conf_delta_ib == 0:
         bias, conf_delta_comp, comp_reasoning = rule_7_dpoc_compression(snapshot, bias)
         confidence += conf_delta_comp
         reasoning_bullets.extend(comp_reasoning)
 
-    # Rule 11: Neutral-Upper/Lower
-    neutral_override = rule_11_neutral_upper_lower(snapshot)
-    if neutral_override != "NA":
-        bias = neutral_override
-        reasoning_bullets.append(f"Price in {neutral_override.lower().replace('-', ' ')}: No momentum continuation — avoiding FOMO")
+    # Rule 11: Neutral-Upper/Lower (skip if higher-priority rules already set directional bias)
+    # Rules 5/6/7 are higher priority — IB acceptance, DPOC extreme, DPOC compression
+    high_priority_fired = (conf_delta_ib != 0 or conf_delta_extreme != 0 or conf_delta_comp != 0)
+    if not high_priority_fired:
+        neutral_override = rule_11_neutral_upper_lower(snapshot)
+        if neutral_override != "NA":
+            bias = neutral_override
+            reasoning_bullets.append(f"Price in {neutral_override.lower().replace('-', ' ')}: No momentum continuation — avoiding FOMO")
 
     # Rule 3: Apply weak trend cap AFTER bias is set
     bias, confidence = rule_3_weak_trend_cap(bias, confidence, trend_strength)
@@ -587,6 +659,11 @@ def apply_inference_rules(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     # Rule 13: Morph Status
     morph_status = rule_13_morph_status(snapshot)
+
+    # Rule 14: Balance Morph Bias Adjustment
+    bias, conf_delta_morph, morph_reasoning = rule_14_balance_morph_bias(snapshot, bias, confidence)
+    confidence += conf_delta_morph
+    reasoning_bullets.extend(morph_reasoning)
 
     # Build TPO read
     intraday = snapshot.get("intraday", {})

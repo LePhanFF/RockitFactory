@@ -30,70 +30,98 @@ def get_volume_profile(df_extended, df_current, current_time_str="11:45"):
     prev_3_dates = all_dates[all_dates < current_date][-3:]
     prev_3_df = df_extended[df_extended['session_date'].isin(prev_3_dates.strftime('%Y-%m-%d'))]
 
+    # Previous 5 days composite
+    prev_5_dates = all_dates[all_dates < current_date][-5:]
+    prev_5_df = df_extended[df_extended['session_date'].isin(prev_5_dates.strftime('%Y-%m-%d'))]
+
+    # Previous 10 days composite
+    prev_10_dates = all_dates[all_dates < current_date][-10:]
+    prev_10_df = df_extended[df_extended['session_date'].isin(prev_10_dates.strftime('%Y-%m-%d'))]
+
     def calculate_profile(df):
+        empty_result = {
+            "poc": "not_available",
+            "vah": "not_available",
+            "val": "not_available",
+            "high": "not_available",
+            "low": "not_available",
+            "hvn_nodes": [],
+            "lvn_nodes": []
+        }
         if df.empty:
-            return {
-                "poc": "not_available",
-                "vah": "not_available",
-                "val": "not_available",
-                "high": "not_available",
-                "low": "not_available",
-                "hvn_nodes": [],
-                "lvn_nodes": []
-            }
+            return empty_result
 
         high = df['high'].max()
         low = df['low'].min()
 
-        # Volume profile binning (NQ tick = 0.25)
-        df = df.copy()
-        price_bins = np.arange(df['low'].min() - 0.25, df['high'].max() + 0.5, 0.25)
-        df['price_bin'] = pd.cut(df['close'], bins=price_bins, labels=price_bins[:-1])
+        # Build volume profile at tick resolution (0.25 for NQ/ES)
+        # Distribute each bar's volume across its high-low range
+        tick_size = 0.25
+        price_bins = {}
+        for _, row in df.iterrows():
+            bar_low = row['low']
+            bar_high = row['high']
+            vol = row['volume']
+            num_ticks = max(1, round((bar_high - bar_low) / tick_size))
+            vol_per_tick = vol / num_ticks
+            tick = bar_low
+            while tick <= bar_high + tick_size * 0.5:
+                key = round(round(tick / tick_size) * tick_size, 2)
+                price_bins[key] = price_bins.get(key, 0) + vol_per_tick
+                tick += tick_size
 
-        vol_profile = df.groupby('price_bin', observed=False)['volume'].sum()
-        total_volume = vol_profile.sum()
+        if not price_bins:
+            return empty_result
 
+        total_volume = sum(price_bins.values())
         if total_volume == 0:
-            return {
-                "poc": "not_available",
-                "vah": "not_available",
-                "val": "not_available",
-                "high": round(high, 2),
-                "low": round(low, 2),
-                "hvn_nodes": [],
-                "lvn_nodes": []
-            }
+            return {**empty_result, "high": round(high, 2), "low": round(low, 2)}
 
-        poc = vol_profile.idxmax()
+        # POC = price level with highest volume
+        poc = max(price_bins, key=lambda p: price_bins[p])
 
-        # 70% value area
-        sorted_vol = vol_profile.sort_values(ascending=False)
-        cum_vol = 0
-        va_prices = []
-        for price, vol in sorted_vol.items():
-            va_prices.append(price)
-            cum_vol += vol
-            if cum_vol >= 0.7 * total_volume:
+        # CBOT standard Value Area: expand outward from POC until 70% captured
+        sorted_prices = sorted(price_bins.keys())
+        poc_idx = sorted_prices.index(poc) if poc in sorted_prices else len(sorted_prices) // 2
+        vah_idx = poc_idx
+        val_idx = poc_idx
+        cumulative = price_bins.get(poc, 0)
+        target_volume = 0.70 * total_volume
+
+        while cumulative < target_volume:
+            can_go_up = vah_idx + 1 < len(sorted_prices)
+            can_go_down = val_idx - 1 >= 0
+
+            if not can_go_up and not can_go_down:
                 break
 
-        vah = max(va_prices)
-        val = min(va_prices)
+            vol_above = price_bins.get(sorted_prices[vah_idx + 1], 0) if can_go_up else 0
+            vol_below = price_bins.get(sorted_prices[val_idx - 1], 0) if can_go_down else 0
 
-        # HVN/LVN: top/bottom 10% volume prices (top 3 each)
-        cum_vol_hvn = 0
-        cum_vol_lvn = total_volume
-        hvn_nodes = []
-        lvn_nodes = []
-        for price, vol in sorted_vol.items():
-            if cum_vol_hvn < 0.1 * total_volume:
-                hvn_nodes.append(price)
-                cum_vol_hvn += vol
-            if cum_vol_lvn > 0.9 * total_volume:
-                lvn_nodes.append(price)
-                cum_vol_lvn -= vol
+            if vol_above >= vol_below and can_go_up:
+                vah_idx += 1
+                cumulative += price_bins.get(sorted_prices[vah_idx], 0)
+            elif can_go_down:
+                val_idx -= 1
+                cumulative += price_bins.get(sorted_prices[val_idx], 0)
+            else:
+                break
 
-        hvn_nodes = [round(float(p), 2) for p in hvn_nodes[:3]]
-        lvn_nodes = [round(float(p), 2) for p in sorted(vol_profile.nsmallest(3).index)]
+        vah = sorted_prices[vah_idx]
+        val = sorted_prices[val_idx]
+
+        # HVN: top 3 price levels by volume
+        sorted_by_vol = sorted(price_bins.items(), key=lambda x: x[1], reverse=True)
+        hvn_nodes = [round(p, 2) for p, _ in sorted_by_vol[:3]]
+
+        # LVN: 3 lowest-volume levels within the traded range (exclude extremes)
+        # Only consider levels between VAL and VAH to find meaningful LVNs
+        interior_bins = {p: v for p, v in price_bins.items() if val <= p <= vah and v > 0}
+        if len(interior_bins) >= 3:
+            sorted_interior = sorted(interior_bins.items(), key=lambda x: x[1])
+            lvn_nodes = sorted([round(p, 2) for p, _ in sorted_interior[:3]])
+        else:
+            lvn_nodes = []
 
         return {
             "poc": round(float(poc), 2),
@@ -108,10 +136,14 @@ def get_volume_profile(df_extended, df_current, current_time_str="11:45"):
     current_profile = calculate_profile(current_session)
     prev_day_profile = calculate_profile(prev_day_df)
     prev_3_profile = calculate_profile(prev_3_df)
+    prev_5_profile = calculate_profile(prev_5_df)
+    prev_10_profile = calculate_profile(prev_10_df)
 
     return {
         "current_session": current_profile,
         "previous_day": prev_day_profile,
         "previous_3_days": prev_3_profile,
+        "previous_5_days": prev_5_profile,
+        "previous_10_days": prev_10_profile,
         "note": "Volume profile (70% value area) + top HVN/LVN nodes. Current = up to snapshot time (no lookahead)"
     }

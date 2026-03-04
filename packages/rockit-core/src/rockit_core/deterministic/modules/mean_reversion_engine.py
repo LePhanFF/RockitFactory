@@ -1,24 +1,13 @@
 """
-Phase 12: Mean Reversion Engine
-Combines dual acceptance test (VAH + VAL), range classification, and target selection.
+Range Classification — IB range classification + extreme rejection tests.
 
-Core Logic:
-1. Early day_type detection (by 11:00-12:00 AM with confidence)
-2. IB range classification (tight < 200pts vs wide > 250pts)
-3. Dual acceptance test (rejection at both VAH and VAL)
-4. Mean reversion target selection (VWAP for tight, VAH/VAL for wide)
-5. Trade setup framing (short high with proper target, long low with proper target)
+Market structure module: Classifies IB range as tight/normal/wide and tests
+rejection behavior at VAH and VAL extremes. Pure observation — no trade signals.
 
-Strategy:
-├─ Tight Range Day (IB < 200pts)
-│  ├─ High fails (VAH rejection) → SHORT high, target VWAP
-│  ├─ Low fails (VAL rejection) → LONG low, target VWAP
-│  └─ Result: Quick mean reversion to VWAP
-│
-└─ Wide Range Day (IB > 250pts)
-   ├─ High fails (VAH rejection) → SHORT high, target VAH (not VWAP)
-   ├─ Low fails (VAL rejection) → LONG low, target VAL (not VWAP)
-   └─ Result: Mean reversion to extremes (acceptance at bounds)
+Classification:
+├─ Tight Range (IB < 200pts): Narrow IB, potential for expansion
+├─ Normal Range (IB 200-250pts): Typical session
+└─ Wide Range (IB > 250pts): Expanded IB, potential for rotation
 """
 
 import pandas as pd
@@ -26,29 +15,19 @@ import numpy as np
 from datetime import time
 
 
-def get_mean_reversion_setup(df_nq, intraday_data, current_time_str="11:45"):
+def get_range_analysis(df_nq, intraday_data, current_time_str="11:45"):
     """
-    Main entry point: Generate mean reversion trade setup with proper targets.
+    Analyze IB range classification and extreme rejection behavior.
+
+    Market structure module: Pure observation — no trade signals.
 
     Args:
         df_nq: DataFrame with 5-min candles (pre-filtered to current_time)
-        intraday_data: Dict with ib, volume_profile, tpo_profile, acceptance_test, inference
+        intraday_data: Dict with ib, volume_profile, tpo_profile
         current_time_str: Current snapshot time ("HH:MM")
 
     Returns:
-        dict: {
-            "ib_range_classification": str ("tight", "wide", "normal"),
-            "ib_range_pts": float,
-            "high_rejection": dict (acceptance test at VAH),
-            "low_rejection": dict (acceptance test at VAL),
-            "mean_reversion_target_high": float (VWAP or VAH),
-            "mean_reversion_target_low": float (VWAP or VAL),
-            "trade_setup_high": dict (SHORT high with target),
-            "trade_setup_low": dict (LONG low with target),
-            "combined_confidence": float (0.0-1.0),
-            "recommended_action": str ("DUAL_SIDED", "SHORT_BIAS", "LONG_BIAS", "STANDBY"),
-            "note": str
-        }
+        dict: Range classification, rejection tests, confidence
     """
 
     # Extract required data
@@ -64,7 +43,7 @@ def get_mean_reversion_setup(df_nq, intraday_data, current_time_str="11:45"):
     poc = current_session.get('poc')
 
     # Get VWAP and other price levels
-    current_vwap = ib.get('vwap')  # Current VWAP
+    current_vwap = ib.get('current_vwap')  # Key name from ib_location module
     current_close = ib.get('current_close')
 
     tpo_data = intraday_data.get('tpo_profile', {})
@@ -86,25 +65,12 @@ def get_mean_reversion_setup(df_nq, intraday_data, current_time_str="11:45"):
         df_nq, val, "low", ib_low, ib_range, current_time_str
     )
 
-    # Step 4: Select mean reversion targets based on range
-    target_high = _select_mr_target(vah, current_vwap, range_class, "high")
-    target_low = _select_mr_target(val, current_vwap, range_class, "low")
-
-    # Step 5: Generate trade setups
-    trade_setup_short = _generate_short_setup(
-        ib_high, target_high, high_rejection, range_class, ib_range
-    )
-
-    trade_setup_long = _generate_long_setup(
-        ib_low, target_low, low_rejection, range_class, ib_range
-    )
-
-    # Step 6: Score combined confidence
+    # Step 4: Score combined confidence
     combined_conf = _score_combined_confidence(
         high_rejection, low_rejection, range_class
     )
 
-    # Step 7: Recommend action
+    # Step 5: Recommend action
     action = _recommend_action(
         high_rejection, low_rejection, combined_conf, range_class
     )
@@ -114,17 +80,17 @@ def get_mean_reversion_setup(df_nq, intraday_data, current_time_str="11:45"):
         "ib_range_pts": round(float(ib_range), 1),
         "high_rejection": high_rejection,
         "low_rejection": low_rejection,
-        "mean_reversion_target_high": round(float(target_high), 2),
-        "mean_reversion_target_low": round(float(target_low), 2),
-        "trade_setup_high": trade_setup_short,
-        "trade_setup_low": trade_setup_long,
         "combined_confidence": round(float(combined_conf), 2),
         "recommended_action": action,
-        "note": f"Mean reversion engine: {range_label} range ({ib_range:.0f}pts). "
-                f"High rejection conf {high_rejection['rejection_confidence']:.2f}, "
-                f"Low rejection conf {low_rejection['rejection_confidence']:.2f}. "
+        "note": f"Range analysis: {range_label} ({ib_range:.0f}pts). "
+                f"High rejection {high_rejection['rejection_confidence']:.2f}, "
+                f"Low rejection {low_rejection['rejection_confidence']:.2f}. "
                 f"Action: {action}"
     }
+
+
+# Keep old name as alias for backward compatibility during transition
+get_mean_reversion_setup = get_range_analysis
 
 
 def _classify_ib_range(ib_range_pts):
@@ -437,10 +403,6 @@ def _empty_setup(note):
         "ib_range_pts": 0.0,
         "high_rejection": {"tested": False, "rejection_confidence": 0.0, "note": note},
         "low_rejection": {"tested": False, "rejection_confidence": 0.0, "note": note},
-        "mean_reversion_target_high": 0.0,
-        "mean_reversion_target_low": 0.0,
-        "trade_setup_high": {"setup_valid": False, "confidence": 0.0},
-        "trade_setup_low": {"setup_valid": False, "confidence": 0.0},
         "combined_confidence": 0.0,
         "recommended_action": "STANDBY",
         "note": note

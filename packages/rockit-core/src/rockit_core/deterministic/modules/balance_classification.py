@@ -13,6 +13,18 @@ b-type: Lower extreme REJECTED, Upper extreme ACCEPTED
 Neutral: Both extremes tested equally
   → Bias: None
   → Playbook: Wait for one to be rejected clearly
+
+Skew Analysis (Dalton framework):
+  On a balance day, "value" (POC) tells you who's winning.
+  - Value migrating above IB mid → buyers accepting (bullish skew)
+  - Value migrating below IB mid → sellers accepting (bearish skew)
+  - The seam is the pivot level separating bullish from bearish skew.
+
+Morph Detection:
+  Balance days tend to morph in PM session (12:00-16:00).
+  - Neutral → P-structure (bearish morph): value migrating down
+  - Neutral → b-structure (bullish morph): value migrating up
+  - Trend morph: IB extension + sustained directional acceptance
 """
 
 import pandas as pd
@@ -117,6 +129,13 @@ def get_balance_classification(df_nq, intraday_data, current_time_str="11:45"):
     lower_probe_result = lower_result['probe_result'] if lower_result else "none"
     lower_probe_conf = lower_result['acceptance_confidence'] if lower_result else 0.0
 
+    # Compute skew + seam (where is value forming relative to IB?)
+    skew_result = _compute_skew(intraday_data)
+    seam_level, seam_description = _compute_seam(intraday_data)
+
+    # Detect morph (PM session balance→skew shifts)
+    morph_result = _detect_morph(intraday_data, current_time_str, balance_type, seam_level)
+
     return {
         "balance_type": balance_type,
         "upper_probe_result": upper_probe_result,
@@ -127,6 +146,12 @@ def get_balance_classification(df_nq, intraday_data, current_time_str="11:45"):
         "dominant_bias": bias,
         "playbook_action": playbook_action,
         "confidence": round(float(confidence), 2),
+        "skew": skew_result["skew"],
+        "skew_strength": skew_result["skew_strength"],
+        "skew_factors": skew_result["skew_factors"],
+        "seam_level": seam_level,
+        "seam_description": seam_description,
+        "morph": morph_result,
         "note": f"Balance classification: {balance_type}-type. Bias: {bias}. Action: {playbook_action}"
     }
 
@@ -300,6 +325,400 @@ def _score_balance_confidence(upper_result, lower_result, balance_type):
         return min(0.75, base_conf * 0.75)  # Restored to 0.75 for neutral
 
 
+def _compute_skew(intraday_data):
+    """
+    Determine balance day skew from volume profile, TPO, and DPOC.
+
+    Scoring: Each factor contributes a vote (+1 bullish, -1 bearish, 0 neutral)
+    - Volume POC above IB mid → +1
+    - TPO POC above IB mid → +1
+    - DPOC migrating up → +1
+    - Fattening above VA → +1
+    - Close in upper third → +1
+
+    Skew = sum of votes / max possible (5)
+    > 0 = bullish, < 0 = bearish, 0 = neutral
+    """
+    ib = intraday_data.get('ib', {})
+    ib_high = ib.get('ib_high')
+    ib_low = ib.get('ib_low')
+
+    if ib_high is None or ib_low is None:
+        return {"skew": "neutral", "skew_strength": 0.0, "skew_factors": _empty_skew_factors()}
+
+    ib_mid = (ib_high + ib_low) / 2.0
+    tolerance = 5.0  # POC within ±5 pts of IB mid = "at" (neutral)
+
+    vol_profile = intraday_data.get('volume_profile', {})
+    current_session = vol_profile.get('current_session', {})
+    vol_poc = current_session.get('poc')
+    vah = current_session.get('vah')
+    val = current_session.get('val')
+
+    tpo_data = intraday_data.get('tpo_profile', {})
+    tpo_poc = tpo_data.get('current_poc')
+    fattening_zone = tpo_data.get('fattening_zone', 'inside_va')
+
+    dpoc_migration = intraday_data.get('dpoc_migration', {})
+    dpoc_direction = dpoc_migration.get('direction', 'flat')
+
+    current_close = ib.get('current_close')
+
+    # Score each factor
+    votes = 0
+
+    # Factor 1: Volume POC vs IB mid
+    if vol_poc is not None:
+        if vol_poc > ib_mid + tolerance:
+            vol_poc_position = "above"
+            votes += 1
+        elif vol_poc < ib_mid - tolerance:
+            vol_poc_position = "below"
+            votes -= 1
+        else:
+            vol_poc_position = "at"
+    else:
+        vol_poc_position = "at"
+
+    # Factor 2: TPO POC vs IB mid
+    if tpo_poc is not None:
+        if tpo_poc > ib_mid + tolerance:
+            tpo_poc_position = "above"
+            votes += 1
+        elif tpo_poc < ib_mid - tolerance:
+            tpo_poc_position = "below"
+            votes -= 1
+        else:
+            tpo_poc_position = "at"
+    else:
+        tpo_poc_position = "at"
+
+    # Factor 3: DPOC direction
+    if dpoc_direction == "up":
+        dpoc_dir = "up"
+        votes += 1
+    elif dpoc_direction == "down":
+        dpoc_dir = "down"
+        votes -= 1
+    else:
+        dpoc_dir = "flat"
+
+    # Factor 4: Fattening zone
+    fat_zone = fattening_zone.lower() if isinstance(fattening_zone, str) else "inside_va"
+    if fat_zone in ("above_vah", "at_vah"):
+        votes += 1
+    elif fat_zone in ("below_val", "at_val"):
+        votes -= 1
+
+    # Factor 5: Close position relative to VA
+    if current_close is not None and vah is not None and val is not None:
+        va_range = vah - val
+        if va_range > 0:
+            upper_third_floor = vah - (va_range * 0.33)
+            lower_third_ceiling = val + (va_range * 0.33)
+            if current_close > upper_third_floor:
+                close_pos = "upper_third"
+                votes += 1
+            elif current_close < lower_third_ceiling:
+                close_pos = "lower_third"
+                votes -= 1
+            else:
+                close_pos = "middle"
+        else:
+            close_pos = "middle"
+    else:
+        close_pos = "middle"
+
+    # Compute skew
+    max_votes = 5
+    skew_strength = round(abs(votes) / max_votes, 2)
+    if votes > 0:
+        skew = "bullish"
+    elif votes < 0:
+        skew = "bearish"
+    else:
+        skew = "neutral"
+
+    skew_factors = {
+        "vol_poc_vs_ib_mid": vol_poc_position,
+        "tpo_poc_vs_ib_mid": tpo_poc_position,
+        "dpoc_direction": dpoc_dir,
+        "fattening_zone": fat_zone,
+        "close_position": close_pos,
+    }
+
+    return {"skew": skew, "skew_strength": skew_strength, "skew_factors": skew_factors}
+
+
+def _compute_seam(intraday_data):
+    """
+    Compute the seam level — the pivot that separates bullish from bearish skew.
+
+    Weighted average of:
+    - IB midpoint (weight 0.4)
+    - Volume POC (weight 0.3)
+    - TPO POC (weight 0.3)
+
+    If all three agree (within 10 pts), seam = average.
+    If they diverge, seam = IB mid (most reliable).
+    """
+    ib = intraday_data.get('ib', {})
+    ib_high = ib.get('ib_high')
+    ib_low = ib.get('ib_low')
+
+    if ib_high is None or ib_low is None:
+        return 0.0, "No IB data for seam calculation"
+
+    ib_mid = (ib_high + ib_low) / 2.0
+
+    vol_profile = intraday_data.get('volume_profile', {})
+    vol_poc = vol_profile.get('current_session', {}).get('poc')
+
+    tpo_data = intraday_data.get('tpo_profile', {})
+    tpo_poc = tpo_data.get('current_poc')
+
+    # Collect available levels
+    levels = [ib_mid]
+    weights = [0.4]
+    descriptions = [f"IB mid {ib_mid:.2f}"]
+
+    if vol_poc is not None:
+        levels.append(vol_poc)
+        weights.append(0.3)
+    if tpo_poc is not None:
+        levels.append(tpo_poc)
+        weights.append(0.3)
+
+    # Check agreement (within 10 pts)
+    if len(levels) == 3:
+        spread = max(levels) - min(levels)
+        if spread <= 10:
+            # All agree — weighted average
+            total_weight = sum(weights)
+            seam = sum(l * w for l, w in zip(levels, weights)) / total_weight
+            desc = f"IB mid {ib_mid:.2f}, vol POC {vol_poc:.2f}, TPO POC {tpo_poc:.2f} — aligned (spread {spread:.1f} pts)"
+        else:
+            # Divergence — fall back to IB mid
+            seam = ib_mid
+            desc = f"IB mid {ib_mid:.2f} (vol POC {vol_poc:.2f}, TPO POC {tpo_poc:.2f} diverge by {spread:.1f} pts)"
+    elif len(levels) == 2:
+        # Only one secondary level available
+        total_weight = sum(weights)
+        seam = sum(l * w for l, w in zip(levels, weights)) / total_weight
+        secondary = vol_poc if vol_poc is not None else tpo_poc
+        sec_label = "vol POC" if vol_poc is not None else "TPO POC"
+        desc = f"IB mid {ib_mid:.2f}, {sec_label} {secondary:.2f}"
+    else:
+        seam = ib_mid
+        desc = f"IB mid {ib_mid:.2f} only"
+
+    return round(float(seam), 2), desc
+
+
+def _detect_morph(intraday_data, current_time_str, balance_type, seam_level):
+    """
+    Detect balance day morph in PM session.
+
+    Only active when current_time >= 12:00 AND balance_type in (P, b, neutral).
+
+    Signal scoring (each adds confidence):
+    - DPOC direction changed in PM (was flat, now up/down): +0.20
+    - Volume POC crossed seam level: +0.20
+    - TPO fattening zone shifted (was inside_va, now at_vah/val): +0.15
+    - Close position shifted (was middle, now upper/lower third): +0.15
+    - IB extension multiple > 0.5x: +0.15
+    - New single prints forming (directional conviction): +0.15
+
+    Status: "developing" (0.30-0.60), "confirmed" (>0.60), "none" (<0.30)
+    """
+    empty_morph = {
+        "status": "none",
+        "morph_type": "none",
+        "morph_time_window": "am",
+        "morph_signals": [],
+        "morph_confidence": 0.0,
+    }
+
+    # Parse current time
+    try:
+        current_time = pd.to_datetime(current_time_str).time()
+    except (ValueError, TypeError):
+        return empty_morph
+
+    # Only active in PM session (>= 12:00)
+    if current_time < time(12, 0):
+        return empty_morph
+
+    # Only for balance-type days
+    if balance_type not in ("P", "b", "neutral"):
+        return empty_morph
+
+    # Determine morph time window
+    if current_time < time(13, 0):
+        morph_window = "pm_early"
+    elif current_time < time(14, 30):
+        morph_window = "pm_prime"
+    else:
+        morph_window = "pm_late"
+
+    # Gather signals
+    signals = []
+    confidence = 0.0
+
+    ib = intraday_data.get('ib', {})
+    ib_high = ib.get('ib_high')
+    ib_low = ib.get('ib_low')
+    current_close = ib.get('current_close')
+
+    vol_profile = intraday_data.get('volume_profile', {})
+    current_session = vol_profile.get('current_session', {})
+    vol_poc = current_session.get('poc')
+    vah = current_session.get('vah')
+    val = current_session.get('val')
+
+    tpo_data = intraday_data.get('tpo_profile', {})
+    tpo_poc = tpo_data.get('current_poc')
+    fattening_zone = tpo_data.get('fattening_zone', 'inside_va')
+    single_above = tpo_data.get('single_prints_above_vah', 0)
+    single_below = tpo_data.get('single_prints_below_val', 0)
+
+    dpoc_migration = intraday_data.get('dpoc_migration', {})
+    dpoc_direction = dpoc_migration.get('direction', 'flat')
+    dpoc_regime = dpoc_migration.get('dpoc_regime', 'transitional_unclear')
+
+    # Track bullish vs bearish signal direction
+    bullish_signals = 0
+    bearish_signals = 0
+
+    # Signal 1: DPOC direction in PM (non-flat = directional conviction)
+    if dpoc_direction == "up":
+        signals.append("dpoc_migrating_up_in_pm")
+        confidence += 0.20
+        bullish_signals += 1
+    elif dpoc_direction == "down":
+        signals.append("dpoc_migrating_down_in_pm")
+        confidence += 0.20
+        bearish_signals += 1
+
+    # Signal 2: Volume POC crossed seam level
+    if vol_poc is not None and seam_level and seam_level > 0:
+        if vol_poc > seam_level + 5:
+            signals.append("vol_poc_above_seam")
+            confidence += 0.20
+            bullish_signals += 1
+        elif vol_poc < seam_level - 5:
+            signals.append("vol_poc_below_seam")
+            confidence += 0.20
+            bearish_signals += 1
+
+    # Signal 3: TPO fattening zone shifted
+    fat_zone = fattening_zone.lower() if isinstance(fattening_zone, str) else "inside_va"
+    if fat_zone in ("above_vah", "at_vah"):
+        signals.append("tpo_fattening_above_va")
+        confidence += 0.15
+        bullish_signals += 1
+    elif fat_zone in ("below_val", "at_val"):
+        signals.append("tpo_fattening_below_va")
+        confidence += 0.15
+        bearish_signals += 1
+
+    # Signal 4: Close position (upper/lower third of VA)
+    if current_close is not None and vah is not None and val is not None:
+        va_range = vah - val
+        if va_range > 0:
+            upper_third_floor = vah - (va_range * 0.33)
+            lower_third_ceiling = val + (va_range * 0.33)
+            if current_close > upper_third_floor:
+                signals.append("close_in_upper_third")
+                confidence += 0.15
+                bullish_signals += 1
+            elif current_close < lower_third_ceiling:
+                signals.append("close_in_lower_third")
+                confidence += 0.15
+                bearish_signals += 1
+
+    # Signal 5: IB extension multiple > 0.5x
+    if ib_high is not None and ib_low is not None and current_close is not None:
+        ib_range = ib_high - ib_low
+        if ib_range > 0:
+            ext_above = max(0, current_close - ib_high)
+            ext_below = max(0, ib_low - current_close)
+            extension = max(ext_above, ext_below)
+            ext_multiple = extension / ib_range
+            if ext_multiple > 0.5:
+                if ext_above > ext_below:
+                    signals.append("ib_extension_up_gt_0.5x")
+                    confidence += 0.15
+                    bullish_signals += 1
+                else:
+                    signals.append("ib_extension_down_gt_0.5x")
+                    confidence += 0.15
+                    bearish_signals += 1
+
+    # Signal 6: New single prints forming
+    if single_above >= 2:
+        signals.append("single_prints_above_vah")
+        confidence += 0.15
+        bullish_signals += 1
+    elif single_below >= 2:
+        signals.append("single_prints_below_val")
+        confidence += 0.15
+        bearish_signals += 1
+
+    # Determine morph type based on dominant direction
+    confidence = round(min(confidence, 1.0), 2)
+
+    # When signals cancel out (equal bullish/bearish), no directional morph
+    if bullish_signals == bearish_signals or confidence < 0.30:
+        return {
+            "status": "none",
+            "morph_type": "none",
+            "morph_time_window": morph_window,
+            "morph_signals": signals,
+            "morph_confidence": 0.0,
+        }
+
+    # Determine direction
+    if bullish_signals > bearish_signals:
+        # Check if this is a trend morph (IB extension + strong DPOC)
+        has_ib_ext = any("ib_extension_up" in s for s in signals)
+        if has_ib_ext and dpoc_regime == "trending_on_the_move":
+            morph_type = "to_trend_up"
+        else:
+            morph_type = "neutral_to_bullish"
+    else:
+        has_ib_ext = any("ib_extension_down" in s for s in signals)
+        if has_ib_ext and dpoc_regime == "trending_on_the_move":
+            morph_type = "to_trend_down"
+        else:
+            morph_type = "neutral_to_bearish"
+
+    # Status classification
+    if confidence > 0.60:
+        status = "confirmed"
+    else:
+        status = "developing"
+
+    return {
+        "status": status,
+        "morph_type": morph_type,
+        "morph_time_window": morph_window,
+        "morph_signals": signals,
+        "morph_confidence": confidence,
+    }
+
+
+def _empty_skew_factors():
+    """Returns default skew factors when data is insufficient."""
+    return {
+        "vol_poc_vs_ib_mid": "at",
+        "tpo_poc_vs_ib_mid": "at",
+        "dpoc_direction": "flat",
+        "fattening_zone": "inside_va",
+        "close_position": "middle",
+    }
+
+
 def _empty_balance_result(note):
     """Returns empty balance result."""
     return {
@@ -312,5 +731,17 @@ def _empty_balance_result(note):
         "dominant_bias": "none",
         "playbook_action": "WAIT_DUAL_SIDED",
         "confidence": 0.0,
+        "skew": "neutral",
+        "skew_strength": 0.0,
+        "skew_factors": _empty_skew_factors(),
+        "seam_level": 0.0,
+        "seam_description": "No data",
+        "morph": {
+            "status": "none",
+            "morph_type": "none",
+            "morph_time_window": "am",
+            "morph_signals": [],
+            "morph_confidence": 0.0,
+        },
         "note": note
     }
