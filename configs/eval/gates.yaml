@@ -1,0 +1,34 @@
+# Evaluation gates — thresholds that must be met before promoting changes.
+# Used by the automated MLOps pipeline and manual evaluation workflow.
+
+# Baseline comparison gates (Phase 1a+)
+backtest_gates:
+  min_win_rate: 0.50
+  min_profit_factor: 1.30
+  max_drawdown_pct: 0.15
+  min_trades: 50
+  min_sessions: 100
+
+# Per-strategy minimum viability
+strategy_gates:
+  min_trades: 10
+  min_win_rate: 0.45
+  min_profit_factor: 1.10
+
+# Regression detection (new vs baseline)
+regression_gates:
+  max_win_rate_drop: 0.05
+  max_pf_drop: 0.20
+  max_drawdown_increase_pct: 0.03
+
+# Agent system gates (Phase 5a)
+agent_gates:
+  min_consensus_accuracy: 0.55
+  min_debate_resolution_rate: 0.80
+  max_latency_ms: 5000
+
+# Model training gates (Phase 4)
+training_gates:
+  min_eval_accuracy: 0.60
+  max_loss_increase: 0.10
+  min_training_samples: 1000

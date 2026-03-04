@@ -1,0 +1,1 @@
+from rockit_core.indicators.technical import add_all_indicators

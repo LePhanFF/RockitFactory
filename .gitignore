@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Docker
+.docker/
+
+# Environment
+.env
+.env.local
+.env.*.local
+credentials.json
+
+# Data (large files)
+*.parquet
+*.arrow
+data/raw/
+data/processed/
+data/sessions/*.csv
+data/sessions/*.zip
+data/results/
+
+# ML artifacts
+mlruns/
+models/
+checkpoints/
+*.ckpt
+*.safetensors
+*.gguf
+
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
+# Node (for rockit-ui if included later)
+node_modules/
+npm-debug.log*
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
