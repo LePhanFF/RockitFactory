@@ -1651,19 +1651,19 @@ current deterministic snapshot. Audit:
 
 ### Training Data & Schema
 - [ ] Review existing training pairs — do thinking steps match the tape reading quality in the studies?
-- [ ] Rename `strategy_assessment` → `tape_observations` in output schema + system prompt
-- [ ] Add `invalidation` field to output schema
-- [ ] Add trend_following and mean_reversion to tape_observations
-- [ ] Expand edge_fade with B-Day study findings (POC shape, first touch, DPOC regime)
-- [ ] Update OR Acceptance with study data (IB window, level hierarchy, BOTH filter)
+- [x] Rename `strategy_assessment` → `tape_observations` in output schema + system prompt
+- [x] Add `invalidation` field to output schema
+- [x] Add trend_following and two_hour_trader to tape_observations
+- [x] Merge b_day + edge_fade into b_day_edge_fade with study data (POC shape, first touch, DPOC regime)
+- [x] Update OR Acceptance with study data (IB window, level hierarchy, BOTH filter)
 - [ ] Regenerate training pairs with V2 schema (164 pairs need redo)
 
 ### Deterministic Engine Additions (Part 8 priorities)
 - [ ] Add IB edge touch counter (touch_count_ibh, touch_count_ibl, first_touch_time)
-- [ ] Add ADX(14) to snapshot for regime classification
-- [ ] Add session open type classification (Acceptance/Judas/Chop/Both)
-- [ ] Add VA entry depth percentage for 80P quality
-- [ ] Add DPOC retention percentage for exhaustion detection
+- [x] Add ADX(14) to snapshot for regime classification
+- [x] Add session open type classification (Acceptance/Judas/Chop/Both) — in tape_context module
+- [x] Add VA entry depth percentage for 80P quality — in tape_context module
+- [x] Add DPOC retention percentage for exhaustion detection — in tape_context module
 - [ ] Add premarket directional score + bias classification
 - [ ] Add `asia_bias` / `london_bias` / `overnight_sweep` derived fields
 
@@ -1682,11 +1682,11 @@ current deterministic snapshot. Audit:
 - [ ] Add study-derived anti-patterns (P-Day shorts, VWAP sweep-fail, 2nd/3rd touch degradation)
 
 ### Two Hour Trader (Options)
-- [ ] Add `two_hour_trader` to output schema and system prompt
+- [x] Add `two_hour_trader` to output schema and system prompt
 - [ ] Define when LLM should call out options vs stay silent (conviction threshold)
 - [ ] VIX data source — do we have VIX in our data feed? If not, add to deterministic snapshot
-- [ ] RSI computation — needed for MR entry type (currently not in snapshot)
-- [ ] Bollinger Band computation — needed for MR entry type
+- [x] RSI computation — already in ib_location module (rsi14 from CSV)
+- [x] Bollinger Band computation — added BB(20,2) to ib_location module
 - [ ] Options P&L tracking in DuckDB (separate from futures trades)
 - [ ] Train LLM on options risk rules ($400 max, 11:30 hard exit, VIX > 30 = sit out)
 

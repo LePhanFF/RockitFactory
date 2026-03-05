@@ -54,7 +54,8 @@ TIME_PHASE_RULES = {
     "or_play":              ("09:30", True),
     "ib_read":              ("10:00", True),
     "day_type_call":        ("10:30", True),
-    "strategy_assessment":  ("10:00", True),
+    "tape_observations":    ("10:00", True),
+    "invalidation":         ("10:00", True),
     "value_area_play":      ("10:30", True),
     "tpo_remarks":          ("10:00", True),
 }
@@ -65,7 +66,7 @@ THINKING_STEP_ACTIVATION = {
     "step_3_flow":     "09:30",
     "step_4_levels":   "00:00",
     "step_5_day_type": "10:30",
-    "step_6_setups":   "10:30",
+    "step_6_tape_read":"10:30",
     "step_7_risk":     "10:30",
 }
 
@@ -129,7 +130,7 @@ def validate_output(output: dict, snapshot: dict, schema: dict) -> list[str]:
     thinking = output.get("thinking", {})
     if isinstance(thinking, dict):
         for step in ["step_1_context", "step_2_structure", "step_3_flow",
-                      "step_4_levels", "step_5_day_type", "step_6_setups",
+                      "step_4_levels", "step_5_day_type", "step_6_tape_read",
                       "step_7_risk"]:
             if step not in thinking:
                 errors.append(f"Missing thinking.{step}")

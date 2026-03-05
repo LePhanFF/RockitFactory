@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ROCKIT LLM Output",
-  "description": "Output schema for ROCKIT market analysis. Shared by training pair generation and live inference. Sections not yet active based on current_et_time should use 'NA — [reason]' strings.",
+  "title": "ROCKIT LLM Output v2",
+  "description": "Output schema for ROCKIT market analysis (V2 — tape observation language). Shared by training pair generation and live inference. Sections not yet active based on current_et_time should use 'NA — [reason]' strings.",
   "type": "object",
   "required": [
     "thinking",
@@ -9,12 +9,13 @@
     "or_play",
     "ib_read",
     "day_type_call",
-    "strategy_assessment",
+    "tape_observations",
     "value_area_play",
     "tpo_remarks",
     "evolution",
     "evidence",
     "what_could_go_wrong",
+    "invalidation",
     "one_liner",
     "discipline"
   ],
@@ -28,7 +29,7 @@
         "step_3_flow",
         "step_4_levels",
         "step_5_day_type",
-        "step_6_setups",
+        "step_6_tape_read",
         "step_7_risk"
       ],
       "properties": {
@@ -52,9 +53,9 @@
           "type": "string",
           "description": "Day type evidence: reference inference.day_type.type AND explain WHY with 3-4 bullets linking snapshot data to the classification definition. 'NA — IB not complete' before 10:30."
         },
-        "step_6_setups": {
+        "step_6_tape_read": {
           "type": "string",
-          "description": "Active/potential setups: check or_reversal.signal, edge_fade.signal, balance_classification.playbook_action, mean_reversion.trade_setup_*. Cite backtest WR/PF for each. 'NA — IB not complete' before 10:30."
+          "description": "Tape observations: which patterns are developing? Check OR sweep/acceptance, IB extension, 80P/20P acceptance, trend development (ADX/C-period/multi-TF), edge fade rejection, regime for mean reversion. Cite backtest WR/PF for each. 'NA — IB not complete' before 10:30."
         },
         "step_7_risk": {
           "type": "string",
@@ -120,8 +121,8 @@
         }
       ]
     },
-    "strategy_assessment": {
-      "description": "Assessment of all active/relevant strategy signals from the snapshot.",
+    "tape_observations": {
+      "description": "Tape reading observations for all active/relevant patterns from the snapshot. LLM reads the tape — strategies emit signals, agents decide trades.",
       "oneOf": [
         {
           "type": "string",
@@ -134,43 +135,72 @@
             "or_acceptance",
             "eighty_percent",
             "twenty_percent",
-            "b_day",
-            "edge_fade",
-            "mean_reversion"
+            "b_day_edge_fade",
+            "trend_following",
+            "mean_reversion",
+            "two_hour_trader"
           ],
           "properties": {
             "or_reversal": {
               "type": "string",
-              "description": "or_reversal.signal status + quality assessment if active. Cite 64.4% WR, 2.96 PF. 'Outside window' if past 10:15."
+              "description": "Sweep + reverse observation: or_reversal.signal status, sweep quality (level hierarchy, depth %), CVD divergence. Cite 64.4% WR, 2.96 PF. 'Outside window' if past 10:15."
             },
             "or_acceptance": {
               "type": "string",
-              "description": "3×5-min acceptance above/below OR — is this developing or confirmed? Cite 59.9% WR, 1.46 PF."
+              "description": "Level break + hold observation: 2×5-min consecutive close acceptance above/below OR level. Level hierarchy (London > Asia > Overnight). Cite 59.9% WR, 1.46 PF. Note BOTH session filter."
             },
             "eighty_percent": {
               "type": "string",
-              "description": "80P Rule: Is price outside prior VA and accepting back? Reference VA width, 50% depth target. Cite 42.3% WR, 1.74 PF. 'No entry after 13:00'."
+              "description": "80P Rule observation: open outside prior VA, accepting back inside? VA width ≥25pt? Reference VA depth target at 50%. Cite 42.3% WR, 1.74 PF. 'No entry after 13:00'."
             },
             "twenty_percent": {
               "type": "string",
-              "description": "20P IB Extension: Is IB extension developing? 3×5-min acceptance outside IB extreme? Reference extension_pts and direction."
+              "description": "20P IB Extension observation: IB extension developing? 3×5-min acceptance outside IB extreme? Reference extension_pts and direction."
             },
-            "b_day": {
+            "b_day_edge_fade": {
               "type": "string",
-              "description": "B-Day IBL Fade: Is balance_classification showing b-type? 30-bar acceptance inside IB? VWAP vs IB mid? Cite 46.4% WR, 1.47 PF."
+              "description": "B-Day + Edge Fade observation (merged): balance_classification showing b-type? 30-bar acceptance inside IB? First touch only (2nd/3rd touch degrades to 35% WR). VWAP > IB mid = high confidence. POC shape D = strongest. Cite B-Day 46.4% WR, 1.47 PF. Edge fade: IB edge rejection, active 10:00-13:30."
             },
-            "edge_fade": {
+            "trend_following": {
               "type": "string",
-              "description": "edge_fade.signal status. IB edge rejection pattern? Active 10:00-13:30 only."
+              "description": "Trend development observation: IB width class (narrow = highest potential), C-period close vs IB, ADX reading (>25 = trend, <20 = range), EMA alignment (20>50>200 = bullish stack). From study: 58% WR, 2.8 PF, $1,465/day target. 'NA — IB not complete' before 10:30."
             },
             "mean_reversion": {
               "type": "string",
-              "description": "mean_reversion setup status. WARNING: 42.6% WR, 0.91 PF — LOSING strategy. Flag unreliable."
+              "description": "Mean reversion observation — REGIME-GATED: only observe when ADX < 20 or range-bound regime (balance/neutral day type). WARNING: 42.6% WR, 0.91 PF — LOSING strategy. If regime is trending (ADX > 25), state 'Not applicable — trending regime, MR disabled'. Bollinger Band position, RSI extremes."
+            },
+            "two_hour_trader": {
+              "type": "string",
+              "description": "Options overlay observation (9:30-11:30 window): Is there a confirmed futures direction for SPY/QQQ/SPX 0-DTE overlay? Requirements: VIX < 25 (manual check), clear directional conviction, $400 max risk per trade. From study: 60-79% WR. After 11:30: 'Window closed'. If no conviction: 'No options overlay — insufficient direction'."
             }
           },
           "additionalProperties": false
         }
       ]
+    },
+    "invalidation": {
+      "description": "What would invalidate the current thesis. Always present — even early session has invalidation conditions.",
+      "type": "object",
+      "required": [
+        "condition",
+        "what_it_means",
+        "action"
+      ],
+      "properties": {
+        "condition": {
+          "type": "string",
+          "description": "Specific price level, time, or event that invalidates. E.g., 'Close below IBL 21350 on 2+ consecutive 5-min bars'."
+        },
+        "what_it_means": {
+          "type": "string",
+          "description": "What invalidation implies for the thesis. E.g., 'Bullish IB acceptance thesis fails — day morphing from Trend Up to Balance'."
+        },
+        "action": {
+          "type": "string",
+          "description": "What to do if invalidated. E.g., 'Flatten longs, shift to neutral, re-evaluate at next 5-min close'."
+        }
+      },
+      "additionalProperties": false
     },
     "value_area_play": {
       "type": "string",

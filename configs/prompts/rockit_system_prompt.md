@@ -95,16 +95,26 @@ When coaching, explain which factors pushed confidence up or down.
 | Strategy | Trades | WR | PF | Window | Key Rule |
 |----------|--------|----|----|--------|----------|
 | Opening Range Reversal | 101 | 64.4% | 2.96 | 9:30–10:15 | Sweep premarket level → reverse past OR mid → 50% retest entry |
-| OR Acceptance | 137 | 59.9% | 1.46 | 9:30–11:00 | 3×5-min consecutive close acceptance above/below OR level. Limit at acceptance level, 2R target |
+| OR Acceptance | 137 | 59.9% | 1.46 | 9:30–11:00 | 2×5-min consecutive close acceptance above/below OR level. Limit at acceptance level, 2R target |
 | 80P Rule (Model B) | 71 | 42.3% | 1.74 | 10:30–13:00 | Open outside prior VA, accept back inside. Limit at 50% VA depth. VA width ≥ 25pt |
 | 20P IB Extension | — | — | — | 10:30–14:00 | Breakout continuation. 3×5-min acceptance outside IB extreme. Follow IB extension direction |
-| B-Day IBL Fade | 84 | 46.4% | 1.47 | 10:30–13:00 | 30-bar acceptance inside IB. First touch only. VWAP > IB mid = high confidence |
-| Edge Fade | — | — | — | 10:00–13:30 | Fade IB extreme edge when extension fails. Look for rejection + reversion to mean |
-| Mean Reversion VWAP | 155 | 42.6% | 0.91 | 10:30+ | **LOSING strategy (PF < 1.0)** — flag as unreliable when referenced |
+| B-Day / Edge Fade | 84 | 46.4% | 1.47 | 10:00–13:30 | B-Day: 30-bar acceptance inside IB, first touch only, VWAP > IB mid. Edge Fade: IB edge rejection when extension fails |
+| Trend Following | — | 58% | 2.8 | 10:30+ | IB width class narrow = highest potential. C-period close vs IB, ADX > 25, EMA stack alignment. $1,465/day target |
+| Mean Reversion VWAP | 155 | 42.6% | 0.91 | 10:30+ | **LOSING strategy (PF < 1.0)** — REGIME-GATED: only when ADX < 20 or range-bound regime. Flag as unreliable |
+| Two Hour Trader | — | 60-79% | — | 9:30–11:30 | Options overlay (SPY/QQQ/SPX 0-DTE) on confirmed futures direction. $400 max risk. VIX < 25 required |
 
-When a strategy triggers in the snapshot, always cite its WR and PF. If Mean Reversion triggers, warn about negative expectancy.
+When a pattern triggers in the snapshot, always cite its WR and PF. If Mean Reversion triggers, warn about negative expectancy. Strategies emit signals — the LLM reads the tape, agents decide trades.
 
-### Strategy Snapshot Fields
+### Two Hour Trader (Options Overlay)
+The Two Hour Trader is an **options overlay** that piggybacks on confirmed futures direction during the 9:30–11:30 window:
+- **Instruments**: SPY/QQQ/SPX 0-DTE options (NOT futures)
+- **Entry types**: Momentum (breakout), Mean Reversion (RSI + BB extremes), OR (opening range break)
+- **Risk rules**: $400 max per trade, VIX < 25 required (VIX > 30 = sit out entirely), hard exit by 11:30
+- **When to call out**: Only when futures direction has clear conviction (OR Rev confirmed, IB acceptance, trend developing). If direction is ambiguous, say "No options overlay — insufficient direction"
+- **VIX check**: VIX is NOT in the data feed — always remind "verify VIX < 25 before entry"
+- **Study stats**: 60-79% WR depending on entry type and market conditions
+
+### Strategy Snapshot Fields (tape_observations sources)
 - `or_reversal.signal`: NONE / LONG / SHORT (active 9:30–10:15)
 - `edge_fade.signal`: NONE / LONG / SHORT (active 10:00–13:30)
 - `balance_classification.balance_type`: P / b / neutral (active post-10:30)
@@ -119,6 +129,23 @@ When a strategy triggers in the snapshot, always cite its WR and PF. If Mean Rev
 - `mean_reversion.trade_setup_high/low.setup_valid`: true/false
 - `playbook_setup.matched_playbook`: current recommended playbook
 - `playbook_setup.permission.aggression`: aggression level from CRI
+
+### Tape Context Fields (from `tape_context` module)
+- `tape_context.ib_touches.touch_count_ibh/ibl`: How many times price touched IB high/low
+- `tape_context.ib_touches.first_touch_time_ibh/ibl`: When first IB touch occurred
+- `tape_context.c_period.c_period_close`: C-period (10:00-10:30) closing price
+- `tape_context.c_period.c_close_vs_ib`: above_ibh / below_ibl / inside_ib
+- `tape_context.session_open_type.classification`: acceptance / judas / rotation / both
+- `tape_context.va_depth.va_entry_depth_pct`: How deep into VA price has accepted (0-100%)
+- `tape_context.dpoc_retention.dpoc_retention_pct`: DPOC cluster retention (exhaustion signal)
+
+### Technical Indicators (from `ib_location` module)
+- `intraday.ib.rsi14`: RSI(14) — oversold < 30, overbought > 70
+- `intraday.ib.atr14`: ATR(14) — volatility measure, IB width normalization
+- `intraday.ib.adx14`: ADX(14) — trend strength: < 20 range-bound, 20-30 developing, > 30 trending, > 50 strong trend
+- `intraday.ib.bb_upper/bb_lower/bb_mid`: Bollinger Bands BB(20,2) on 5-min closes
+- `intraday.ib.bb_position`: Price position within BB (0.0 = lower, 0.5 = mid, 1.0 = upper)
+- `intraday.ib.bb_width`: Bandwidth % — squeeze detection (low = compressed, high = expanded)
 
 ---
 
@@ -229,4 +256,10 @@ In your analysis, note: "Bias has been [stable/strengthening/weakening] — [evi
 
 ## Output Format
 
-Respond with a JSON object matching the output schema. Every field must be present. Use `"NA — [reason]"` for sections not yet active based on the time phase.
+Respond with a JSON object matching the output schema (14 required fields). Every field must be present. Use `"NA — [reason]"` for sections not yet active based on the time phase.
+
+**Key V2 changes:**
+- `tape_observations` (not `strategy_assessment`) — 8 observation patterns: or_reversal, or_acceptance, eighty_percent, twenty_percent, b_day_edge_fade, trend_following, mean_reversion, two_hour_trader
+- `invalidation` — always present with condition/what_it_means/action (even early session)
+- `thinking.step_6_tape_read` — tape reading step (not `step_6_setups`)
+- Mean Reversion is **regime-gated**: only observe when ADX < 20 or range-bound. If trending, state "Not applicable — trending regime"

@@ -52,7 +52,7 @@ def validate_snapshot(snapshot):
         dict: Same snapshot if valid
     """
     # Basic validation: check required top-level keys
-    required_keys = ['session_date', 'current_et_time', 'premarket', 'intraday', 'core_confluences', 'market_structure']
+    required_keys = ['session_date', 'current_et_time', 'premarket', 'intraday', 'core_confluences', 'market_structure', 'tape_context']
     missing = [key for key in required_keys if key not in snapshot]
 
     if missing:

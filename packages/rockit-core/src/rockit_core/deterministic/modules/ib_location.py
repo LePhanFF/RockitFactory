@@ -1,9 +1,121 @@
 # modules/ib_location.py
+import numpy as np
 import pandas as pd
 from datetime import time
 
 HIGH_ATR_THRESHOLD = 20.0
 LOW_ATR_THRESHOLD = 12.0
+
+
+def _compute_adx(df, period=14):
+    """
+    Compute ADX(14) using Wilder smoothing from OHLC data.
+    Returns the latest ADX value, or None if insufficient data.
+    """
+    if len(df) < period * 2:
+        return None
+
+    high = df['high'].values
+    low = df['low'].values
+    close = df['close'].values
+
+    # True Range, +DM, -DM
+    tr = np.zeros(len(df))
+    plus_dm = np.zeros(len(df))
+    minus_dm = np.zeros(len(df))
+
+    for i in range(1, len(df)):
+        h_l = high[i] - low[i]
+        h_pc = abs(high[i] - close[i - 1])
+        l_pc = abs(low[i] - close[i - 1])
+        tr[i] = max(h_l, h_pc, l_pc)
+
+        up_move = high[i] - high[i - 1]
+        down_move = low[i - 1] - low[i]
+
+        plus_dm[i] = up_move if (up_move > down_move and up_move > 0) else 0.0
+        minus_dm[i] = down_move if (down_move > up_move and down_move > 0) else 0.0
+
+    # Wilder smoothing (first value = sum of first `period` values, then EMA-like)
+    atr_w = np.zeros(len(df))
+    plus_di_smooth = np.zeros(len(df))
+    minus_di_smooth = np.zeros(len(df))
+
+    atr_w[period] = np.sum(tr[1:period + 1])
+    plus_di_smooth[period] = np.sum(plus_dm[1:period + 1])
+    minus_di_smooth[period] = np.sum(minus_dm[1:period + 1])
+
+    for i in range(period + 1, len(df)):
+        atr_w[i] = atr_w[i - 1] - (atr_w[i - 1] / period) + tr[i]
+        plus_di_smooth[i] = plus_di_smooth[i - 1] - (plus_di_smooth[i - 1] / period) + plus_dm[i]
+        minus_di_smooth[i] = minus_di_smooth[i - 1] - (minus_di_smooth[i - 1] / period) + minus_dm[i]
+
+    # +DI, -DI, DX
+    dx = np.zeros(len(df))
+    for i in range(period, len(df)):
+        if atr_w[i] == 0:
+            continue
+        plus_di = 100 * plus_di_smooth[i] / atr_w[i]
+        minus_di = 100 * minus_di_smooth[i] / atr_w[i]
+        di_sum = plus_di + minus_di
+        if di_sum > 0:
+            dx[i] = 100 * abs(plus_di - minus_di) / di_sum
+
+    # ADX = Wilder smoothed DX
+    adx_start = period * 2
+    if adx_start >= len(df):
+        return None
+
+    adx = np.zeros(len(df))
+    adx[adx_start] = np.mean(dx[period:adx_start + 1])
+
+    for i in range(adx_start + 1, len(df)):
+        adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
+
+    return round(float(adx[-1]), 2)
+
+
+def _compute_bollinger_bands(df_1min, current_time, bb_period=20, bb_std=2):
+    """
+    Compute Bollinger Bands BB(20,2) from 5-min resampled close data.
+    Returns dict with bb_upper, bb_lower, bb_mid, bb_position, bb_width, or None values.
+    """
+    result = {
+        "bb_upper": None, "bb_lower": None, "bb_mid": None,
+        "bb_position": None, "bb_width": None,
+    }
+
+    available = df_1min[df_1min.index.time <= current_time].copy()
+    if len(available) < 5:
+        return result
+
+    # Resample to 5-min bars
+    ohlc_5min = available['close'].resample('5min').last().dropna()
+
+    if len(ohlc_5min) < bb_period:
+        return result
+
+    closes = ohlc_5min.values[-bb_period:]
+    sma = float(np.mean(closes))
+    std = float(np.std(closes, ddof=1))
+
+    bb_upper = round(sma + bb_std * std, 2)
+    bb_lower = round(sma - bb_std * std, 2)
+    bb_mid = round(sma, 2)
+
+    current_price = float(available['close'].iloc[-1])
+    band_range = bb_upper - bb_lower
+    bb_position = round((current_price - bb_lower) / band_range, 4) if band_range > 0 else 0.5
+    bb_position = max(0.0, min(1.0, bb_position))  # clamp 0-1
+    bb_width = round(band_range / bb_mid, 4) if bb_mid > 0 else None
+
+    return {
+        "bb_upper": bb_upper,
+        "bb_lower": bb_lower,
+        "bb_mid": bb_mid,
+        "bb_position": round(bb_position, 4),
+        "bb_width": bb_width,
+    }
 
 def get_ib_location(df_nq, current_time_str="11:45"):
     """
@@ -64,6 +176,12 @@ def get_ib_location(df_nq, current_time_str="11:45"):
     ema200 = round(current_bar['ema200'], 2) if 'ema200' in current_bar else None
     rsi14 = round(current_bar['rsi14'], 2) if 'rsi14' in current_bar else None
     atr14 = round(current_bar['atr14'], 2) if 'atr14' in current_bar else None
+
+    # ADX(14) — trend strength indicator (Wilder smoothing from 1-min OHLC)
+    adx14 = _compute_adx(available_df, period=14)
+
+    # Bollinger Bands BB(20,2) from 5-min resampled closes
+    bb = _compute_bollinger_bands(available_df, current_time)
 
     # ATR-normalized IB width (Dalton framework)
     # Narrow: < 0.7x ATR — high trend potential, breakout likely
@@ -128,6 +246,12 @@ def get_ib_location(df_nq, current_time_str="11:45"):
         "ema200": ema200,
         "rsi14": rsi14,
         "atr14": atr14,
+        "adx14": adx14,
+        "bb_upper": bb["bb_upper"],
+        "bb_lower": bb["bb_lower"],
+        "bb_mid": bb["bb_mid"],
+        "bb_position": bb["bb_position"],
+        "bb_width": bb["bb_width"],
         "ib_atr_ratio": ib_atr_ratio,
         "ib_width_class": ib_width_class,
         "extension_pts": extension_pts,
