@@ -3,7 +3,18 @@
     "allow": [
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:arxiv.org)"
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:qwen.readthedocs.io)",
+      "WebFetch(domain:unsloth.ai)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:atalupadhyay.wordpress.com)",
+      "WebFetch(domain:blog.ivan.digital)",
+      "WebFetch(domain:www.datacamp.com)",
+      "WebFetch(domain:qwen.ai)",
+      "WebFetch(domain:forums.developer.nvidia.com)",
+      "WebFetch(domain:www.digitalapplied.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Skill(merge-data)"
     ]
   }
 }
