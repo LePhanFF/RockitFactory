@@ -27,6 +27,8 @@ from rockit_core.deterministic.modules.balance_classification import get_balance
 from rockit_core.deterministic.modules.mean_reversion_engine import get_mean_reversion_setup
 from rockit_core.deterministic.modules.or_reversal import get_or_reversal_setup
 from rockit_core.deterministic.modules.edge_fade import get_edge_fade_setup
+# Tape reading context (V1 additions for LLM tape reader)
+from rockit_core.deterministic.modules.tape_context import get_tape_context
 # Market structure modules (loaded dynamically via registry)
 from rockit_core.deterministic.modules.market_structure_registry import (
     MARKET_MODULES, load_market_structure
@@ -276,6 +278,20 @@ def generate_snapshot(config):
                 'session_date': session_date, 'current_time': config['current_time']
             })
             snapshot["edge_fade"] = {"error": str(e), "status": "failed"}
+
+        # Tape reading context (IB touches, C-period, open type, VA depth, DPOC retention)
+        try:
+            tape_ctx = get_tape_context(
+                df_current, intraday_data,
+                snapshot.get('premarket', {}),
+                config['current_time']
+            )
+            snapshot["tape_context"] = tape_ctx
+        except Exception as e:
+            logger.log('get_tape_context', e, {
+                'session_date': session_date, 'current_time': config['current_time']
+            })
+            snapshot["tape_context"] = {"error": str(e), "status": "failed"}
 
         # Clean again after adding inference/CRI/playbook/strategy modules
         snapshot = clean_for_json(snapshot)
