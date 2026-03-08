@@ -24,13 +24,13 @@ def test_entry_models_count():
 
 
 def test_stop_models_count():
-    """All 4 stop models are registered."""
-    assert len(STOP_MODEL_FACTORIES) == 4
+    """All stop models are registered (4 original + 11 new)."""
+    assert len(STOP_MODEL_FACTORIES) == 15
 
 
 def test_target_models_count():
-    """All 8 target models are registered."""
-    assert len(TARGET_MODEL_FACTORIES) == 8
+    """All target models are registered (8 original + 6 new)."""
+    assert len(TARGET_MODEL_FACTORIES) == 14
 
 
 def test_entry_model_keys():
@@ -44,12 +44,23 @@ def test_entry_model_keys():
 
 
 def test_stop_model_keys():
-    expected = {"1_atr", "2_atr", "lvn_hvn", "ifvg"}
+    expected = {
+        "1_atr", "2_atr", "lvn_hvn", "ifvg",
+        "level_buffer_10pct", "level_buffer_20pct", "level_buffer_30pct",
+        "fixed_10pts", "fixed_15pts", "fixed_20pts", "fixed_30pts",
+        "ib_edge_10pct", "ib_edge_20pct",
+        "structural_vwap_40pct", "structural_ema20_40pct",
+    }
     assert set(STOP_MODEL_FACTORIES.keys()) == expected
 
 
 def test_target_model_keys():
-    expected = {"1_atr", "2_atr", "2r", "3r", "4r", "trail_be_fvg", "trail_be_bpr", "time_based_liquidity"}
+    expected = {
+        "1_atr", "2_atr", "2r", "3r", "4r",
+        "trail_be_fvg", "trail_be_bpr", "time_based_liquidity",
+        "ib_1.0x", "ib_1.5x", "ib_2.0x",
+        "level_ib_mid", "level_vwap", "adaptive",
+    }
     assert set(TARGET_MODEL_FACTORIES.keys()) == expected
 
 

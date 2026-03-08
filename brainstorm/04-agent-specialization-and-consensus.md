@@ -443,53 +443,123 @@ Use Bayesian evidence chain (Approach 4) as the **default fast path**. Only invo
 
 Based on "start with what's profitable and proven, scale intelligence later":
 
-### Phase 1: Strategy Specialists (Approach 1)
+### Phase 1: Strategy Specialists + Bayesian Foundation (Approach 1 + 4 together)
 
-**Why start here**: We have 16 strategies with backtest data. The agents become expert at those strategies. Consensus is "which strategy specialists see their setup, and do they agree on direction?" This is the most directly measurable approach.
+**Why together**: Strategy specialists without Bayesian calibration are just opinions. Bayesian calibration without specialists has nothing to calibrate. They're two halves of the same system. Build them in tandem from Day 1.
+
+**The core loop**: Specialist evaluates → produces structured assessment → Bayesian engine converts assessment to calibrated probability → probability informs TAKE/SKIP/REDUCE.
 
 **Build**:
 - 8 strategy-specialist prompts (core portfolio)
 - DuckDB enrichment per strategy (historical conditions → outcomes)
-- Specialist → Orchestrator consensus pipeline
-- Backtest replay framework to measure specialist accuracy
+- **Bayesian calibration pipeline** (run specialists through 259 sessions, measure per-specialist accuracy per regime)
+- **Bayesian update engine** — each specialist's assessment shifts the probability based on their calibrated accuracy
+- **Calibration tables**: Per-specialist accuracy, conditional accuracy (specialist A + specialist B agree → outcome), regime-conditional accuracy
+- Session context card cache (pre-load calibration tables at session open)
 
-**Success metric**: Run specialists through 259 sessions. Do they match or beat the existing backtest WR/PF?
+**How Bayesian integrates with debate**:
 
-### Phase 2: Add Bayesian Calibration (Approach 4 as an overlay)
+```
+Snapshot arrives → 8 strategy specialists evaluate
+                         │
+                    Each produces:
+                    - setup_present: bool
+                    - direction: LONG/SHORT
+                    - confidence: 0-1
+                    - risk_factors: [...]
+                         │
+              ┌──────────▼──────────┐
+              │  BAYESIAN ENGINE     │
+              │                      │
+              │  Start: base rate    │
+              │  from backtest       │ ← cached calibration tables
+              │                      │
+              │  Update per          │
+              │  specialist using    │
+              │  calibrated          │
+              │  likelihood ratios   │
+              │                      │
+              │  Output: P(win)      │
+              └──────────┬──────────┘
+                         │
+                   ┌─────▼─────┐
+                   │  P clear?  │
+                   └─────┬─────┘
+                    ╱         ╲
+              P > 65%       45% < P < 65%
+              or P < 35%    (ambiguous)
+                 │               │
+          ┌──────▼──────┐  ┌────▼──────────────────┐
+          │  FAST PATH  │  │  ADVOCATE/SKEPTIC      │
+          │  TAKE/SKIP  │  │  DEBATE                │
+          │  (no LLM)   │  │                        │
+          │             │  │  Advocate sees: P=52%, │
+          │  Log reason │  │  which specialists     │
+          │  + P value  │  │  pushed it up/down     │
+          │             │  │                        │
+          │             │  │  Skeptic sees: which   │
+          │             │  │  risk factors pulled   │
+          │             │  │  P down, historical    │
+          │             │  │  failures at this P    │
+          │             │  │                        │
+          │             │  │  Orchestrator: given   │
+          │             │  │  Bayesian P + debate,  │
+          │             │  │  TAKE or SKIP?         │
+          └─────────────┘  └────────────────────────┘
+```
 
-**Why second**: Once we have specialist accuracy data from Phase 1 replays, we can compute calibration tables. This makes the system self-quantifying.
+**Critical**: The Advocate and Skeptic don't debate blind — they SEE the Bayesian probability and WHICH specialists contributed what. The debate is grounded in math, not vibes.
 
-**Build**:
-- Per-specialist accuracy tables from Phase 1 replay
-- Conditional accuracy (specialist A agrees with specialist B → outcome)
-- Bayesian update engine
-- Fast-path routing (clear probability → no LLM needed)
+```json
+// What the Advocate sees:
+{
+    "bayesian_probability": 0.52,
+    "base_rate": 0.55,
+    "specialist_contributions": [
+        {"agent": "20p_specialist", "assessment": "bullish", "calibrated_accuracy": 0.68, "shift": "+13.2%"},
+        {"agent": "80p_specialist", "assessment": "no_setup", "shift": "0%"},
+        {"agent": "bday_specialist", "assessment": "bearish", "calibrated_accuracy": 0.52, "shift": "-4.1%"},
+        {"agent": "order_flow", "assessment": "cautious", "calibrated_accuracy": 0.61, "shift": "-8.0%"},
+        {"agent": "htf_structure", "assessment": "bearish", "calibrated_accuracy": 0.65, "shift": "-6.1%"}
+    ],
+    "regime": {"ib_width": "narrow", "adx": "moderate", "gap": "above_va"},
+    "similar_historical": {"n": 23, "wr": 0.57, "avg_r": 1.2}
+}
+// Advocate argues: "20P setup is strong (+13.2%), order flow caution is minor (-8%),
+//   and HTF bearish has only 0.52 calibration in narrow IB regimes..."
+// Skeptic argues: "Two specialists pulling down. In the last 10 similar sessions,
+//   P dropped further after this pattern. Skip or reduce size."
+```
 
-**Success metric**: Bayesian fast-path handles 60%+ of decisions correctly without LLM.
+**Success metrics**:
+- Bayesian fast-path handles 60%+ of decisions correctly without LLM
+- Specialist-calibrated P > 65% trades outperform raw strategy WR by 5%+
+- Debate improves ambiguous-zone decisions vs coin flip
 
-### Phase 3: Add Domain Advisors (Approach 3)
+### Phase 2: Add Domain Advisors (Approach 3)
 
-**Why third**: Once strategy specialists are working and calibrated, domain advisors add richness to the context. VWAP context helps the 20P specialist make better calls. HTF context helps all specialists understand structural risk.
+**Why second**: Once strategy specialists and Bayesian calibration are working, domain advisors add richness. VWAP context helps the 20P specialist make better calls. HTF context helps all specialists understand structural risk. Domain advisors feed into the Bayesian chain as additional evidence sources with their own calibration.
 
 **Build**:
 - Domain advisor prompts (can start deterministic, upgrade to LLM if needed)
 - Context card interface between domain advisors and strategy specialists
+- **Calibrate domain advisors** — add them to the Bayesian chain with their own likelihood ratios
 - Retrain/recalibrate strategy specialists with domain context
 
-**Success metric**: Strategy specialist accuracy improves with domain context vs without.
+**Success metric**: Strategy specialist accuracy improves with domain context vs without. Domain advisors have measurable calibration accuracy.
 
-### Phase 4: Full Hybrid (Approach 5)
+### Phase 3: Full System + Self-Calibration
 
-**Why last**: This is the most complex but most capable. By now we have:
-- Strategy specialists that know their edge
-- Bayesian calibration that quantifies confidence
-- Domain advisors that provide rich context
-- LLM debate reserved for the genuinely hard calls
+**Why last**: By now the full pipeline is running. Focus shifts to continuous improvement.
 
 **Build**:
-- Ambiguous-zone routing (Bayesian → debate when uncertain)
-- Full narrative generation for debated decisions
-- Dashboard shows both the probability chain and the debate reasoning
+- **Auto-recalibration**: As new trades complete, update calibration tables automatically
+- **Regime drift detection**: If a specialist's calibration drops below threshold in recent sessions, flag it
+- **Conditional calibration depth**: Pairwise → triple-wise specialist accuracy (when A+B+C all agree, WR = ?)
+- Full narrative generation for debated decisions (dashboard shows both the probability chain AND the debate reasoning)
+- Opus meta-review: periodically audit whether the Bayesian thresholds and calibrations are still valid
+
+**Success metric**: System self-corrects. A specialist that was 68% accurate drops to 55% → system automatically down-weights their contribution until recalibrated.
 
 ---
 
@@ -573,6 +643,143 @@ Current design (Advocate/Skeptic/Orchestrator):
 ```
 
 Bayesian approaches are dramatically faster. Strategy specialist approach is slower but parallelizable. Consider: does intraday trading need sub-second decisions, or is 1-2 seconds acceptable?
+
+### 9. Caching & Pre-Computed Context: Reducing Redundant DuckDB Queries
+
+Agents will ask the same questions repeatedly. Every time the 20P specialist fires, it wants "last 15 similar conditions → outcomes." Every time the Orchestrator makes a decision, it wants "strategy X win rate on this day type." The same historical stats get queried bar after bar, session after session.
+
+**DuckDB's built-in caching is limited**: DuckDB has a buffer pool for data pages (keeps hot pages in memory) and columnar storage is fast for analytics. But it does NOT cache query results — every `SELECT` re-scans and re-aggregates. For a 20,000-row `deterministic_tape` table this is still fast (<10ms per query). But as the warehouse grows and agents multiply, redundant queries add up.
+
+**Three caching strategies, from simple to smart:**
+
+#### Strategy A: Session-Level Context Card Cache (Start Here)
+
+Pre-compute a "context card" per session at session open. Cache it in memory for the day. All agents read from the card instead of querying DuckDB mid-session.
+
+```python
+class SessionContextCache:
+    """Pre-computed at session open, shared by all agents for the day."""
+
+    def __init__(self, db, session_date: str, instrument: str):
+        # Historical stats — these don't change intraday
+        self.strategy_stats = {}  # {strategy: {wr, pf, avg_r, n_trades, by_day_type, by_ib_width}}
+        self.regime_rules = {}    # {strategy: [applicable regime rules]}
+        self.similar_sessions = [] # sessions with similar IB/gap/overnight profile
+        self.calibration_tables = {}  # Bayesian specialist calibrations
+
+        # Populate from DuckDB once
+        self._load_strategy_stats(db, instrument)
+        self._load_regime_rules(db)
+        self._load_similar_sessions(db, session_date, instrument)
+        self._load_calibrations(db)
+
+    def get_strategy_context(self, strategy_name: str, day_type: str) -> dict:
+        """Agent asks: 'What's my hit rate on this day type?' → instant lookup."""
+        return self.strategy_stats.get(strategy_name, {}).get(day_type, {})
+```
+
+**When to invalidate**: At session close (next day gets a fresh card). Intraday data (current session's developing profile) updates incrementally — no DuckDB needed since we have the live bars.
+
+**Cost**: One burst of DuckDB queries at 9:25 AM (~50ms total), zero DuckDB queries during the trading session.
+
+#### Strategy B: Query Frequency Monitor → Materialized Aggregates
+
+Observe what agents actually query, then pre-materialize the most common patterns.
+
+```python
+class QueryObserver:
+    """Wraps DuckDB, counts query patterns, identifies candidates for materialization."""
+
+    def __init__(self, db):
+        self.db = db
+        self.query_log = []  # (timestamp, query_template, params, latency_ms)
+
+    def query(self, sql: str, params=None):
+        t0 = time.time()
+        result = self.db.sql(sql, params).df()
+        latency = (time.time() - t0) * 1000
+
+        # Normalize query to template (strip literals)
+        template = self._normalize(sql)
+        self.query_log.append((datetime.now(), template, params, latency))
+        return result
+
+    def top_queries(self, n=10) -> pd.DataFrame:
+        """What are agents asking most often?"""
+        df = pd.DataFrame(self.query_log, columns=['ts', 'template', 'params', 'latency_ms'])
+        return (df.groupby('template')
+                  .agg(count=('ts', 'count'), avg_ms=('latency_ms', 'mean'))
+                  .sort_values('count', ascending=False)
+                  .head(n))
+```
+
+Once you see the top 10 queries, create materialized views or summary tables:
+
+```sql
+-- If agents constantly ask "strategy X win rate by day type"
+CREATE TABLE agent_cache_strategy_by_daytype AS
+SELECT strategy_name, day_type,
+       COUNT(*) as trades,
+       ROUND(AVG(CASE WHEN net_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100, 1) as wr,
+       ROUND(SUM(CASE WHEN net_pnl > 0 THEN net_pnl ELSE 0 END) /
+             NULLIF(ABS(SUM(CASE WHEN net_pnl <= 0 THEN net_pnl ELSE 0 END)), 0), 2) as pf
+FROM trades
+GROUP BY strategy_name, day_type;
+
+-- Refresh nightly after new backtest data arrives
+-- DROP TABLE agent_cache_strategy_by_daytype; CREATE TABLE ... AS SELECT ...;
+```
+
+**The insight**: Don't guess what to cache — observe, then promote. The query observer tells you exactly what agents need. Publish those as pre-computed tables.
+
+#### Strategy C: Tiered Cache with TTL
+
+For production (live trading), a proper tiered cache:
+
+```
+┌──────────────────────────────────┐
+│  Tier 0: In-Memory (Python dict) │  TTL: session lifetime
+│  - Session context card           │  Populated at 9:25 AM
+│  - Bayesian calibration tables    │  ~50 keys, instant lookup
+│  - Current session indicators     │  Updated per bar (no DB)
+└───────────────┬──────────────────┘
+                │ cache miss
+                ▼
+┌──────────────────────────────────┐
+│  Tier 1: Materialized Tables     │  TTL: nightly refresh
+│  - strategy_by_daytype           │  Pre-aggregated from trades
+│  - strategy_by_regime            │  Pre-aggregated from combo_trades
+│  - pattern_statistics            │  Pre-aggregated from correlations
+│  - regime_rules                  │  Rarely changes
+└───────────────┬──────────────────┘
+                │ cache miss (rare — novel query)
+                ▼
+┌──────────────────────────────────┐
+│  Tier 2: Raw DuckDB Query        │  No TTL — always fresh
+│  - Ad-hoc research queries       │  Only during research sessions
+│  - New correlation studies        │  or novel agent questions
+│  - Full table scans               │
+└──────────────────────────────────┘
+```
+
+**Expected hit rates**:
+- Tier 0: 80-90% of agent queries (same session = same historical context)
+- Tier 1: 8-15% (day-type lookups, regime stats)
+- Tier 2: 2-5% (only novel research questions)
+
+#### What This Means for Each Approach
+
+| Approach | Cache Benefit | Why |
+|----------|--------------|-----|
+| **1. Strategy Specialists** | HIGH — each specialist asks the same "my strategy's hit rate in this regime" every bar | Session context card eliminates 90% of queries |
+| **2. Domain Specialists** | MEDIUM — domains ask broader questions, harder to pre-compute | Can cache domain-level aggregates |
+| **3. Hybrid** | HIGH — strategy layer benefits from caching, domain layer adds moderate overhead | Two-tier: strategy cache (hot) + domain cache (warm) |
+| **4. Bayesian Chain** | VERY HIGH — calibration tables are static within a session | Load calibration tables once, zero DB queries during session |
+| **5. Bayesian + Debate** | VERY HIGH for fast path, MEDIUM for debate (debate may ask novel questions) | Fast path = 100% cached, debate = Tier 1/2 |
+
+#### Recommendation
+
+Start with **Strategy A** (session context card). It's simple, covers 80%+ of agent queries, and costs one burst of DuckDB reads at session open. Add the query observer (Strategy B) once agents are running — let the data tell you what else to cache. Only build the full tiered cache (Strategy C) when you're running 8+ agents in production and latency matters.
 
 ---
 

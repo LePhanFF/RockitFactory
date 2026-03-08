@@ -131,12 +131,13 @@ def test_load_core_strategies_from_config():
     assert os.path.exists(config_path), f"strategies.yaml not found at {config_path}"
 
     strategies = load_strategies_from_config(config_path)
-    assert len(strategies) == 4  # 4 proven report strategies enabled, rest disabled
+    assert len(strategies) == 5  # 5 core strategies enabled, rest disabled
 
     names = {s.name for s in strategies}
     assert "80P Rule" in names
     assert "B-Day" in names
     assert "Opening Range Rev" in names
+    assert "20P IB Extension" in names
 
 
 def test_load_all_strategies_from_custom_config():

@@ -70,8 +70,8 @@ core_strategies:
     direction: both
 
   twenty_percent_rule:
-    enabled: false
-    description: "20P IB Extension — IB extends >20%, 3x5-min acceptance, 2xATR stop, 2R"
+    enabled: true
+    description: "20P IB Extension — 3x5-min acceptance beyond IB boundary, 2xATR stop, 2R target"
     day_types: [all]
     direction: both
 
