@@ -51,6 +51,29 @@ class OpenPosition:
         self.trailing_stop = stop_price
         self.breakeven_activated = False
 
+        # MAE/MFE tracking (updated bar-by-bar)
+        self.mae_price = entry_price  # worst price (LONG: lowest low, SHORT: highest high)
+        self.mfe_price = entry_price  # best price (LONG: highest high, SHORT: lowest low)
+        self.mae_bar = 0              # bar number when MAE occurred
+        self.mfe_bar = 0              # bar number when MFE occurred
+
+    def update_excursions(self, bar_low: float, bar_high: float) -> None:
+        """Update MAE/MFE with current bar's price extremes."""
+        if self.direction == 'LONG':
+            if bar_low < self.mae_price:
+                self.mae_price = bar_low
+                self.mae_bar = self.bars_held
+            if bar_high > self.mfe_price:
+                self.mfe_price = bar_high
+                self.mfe_bar = self.bars_held
+        else:  # SHORT
+            if bar_high > self.mae_price:
+                self.mae_price = bar_high
+                self.mae_bar = self.bars_held
+            if bar_low < self.mfe_price:
+                self.mfe_price = bar_low
+                self.mfe_bar = self.bars_held
+
     def unrealized_pnl_points(self, current_price: float) -> float:
         """Current unrealized P&L in points."""
         if self.direction == 'LONG':

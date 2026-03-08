@@ -435,6 +435,9 @@ class BacktestEngine:
         for pos in self.position_mgr.open_positions:
             pos.bars_held += 1
 
+            # Update MAE/MFE before checking stop/target
+            pos.update_excursions(bar['low'], bar['high'])
+
             # Trend strategy trailing: trail by 1.0x IB range from session extreme
             # This locks in profit as the trend extends while giving enough room
             if pos.strategy_name in trend_strategies and ib_range > 0:
@@ -535,6 +538,10 @@ class BacktestEngine:
             slippage_cost=slip,
             net_pnl=net,
             exit_reason=reason,
+            mae_price=pos.mae_price,
+            mfe_price=pos.mfe_price,
+            mae_bar=pos.mae_bar,
+            mfe_bar=pos.mfe_bar,
         )
 
     def _execute_signal(
