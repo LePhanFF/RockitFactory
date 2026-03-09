@@ -68,11 +68,6 @@ def _find_closest_swept_level(
     for name, lvl in candidates:
         if lvl is None:
             continue
-        # Require directional breach, not just proximity
-        if direction == "high" and eor_extreme < lvl:
-            continue
-        if direction == "low" and eor_extreme > lvl:
-            continue
         dist = abs(eor_extreme - lvl)
         if dist < sweep_threshold and dist < best_dist:
             best_dist = dist

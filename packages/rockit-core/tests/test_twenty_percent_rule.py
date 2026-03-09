@@ -21,11 +21,27 @@ def strategy():
 
 @pytest.fixture
 def session_context():
+    """Default context: session opens above prior VAH → LONG allowed."""
     return {
         'day_type': 'neutral',
         'trend_strength': 'moderate',
         'bar_time': _time(11, 0),
         'atr14': 16.0,
+        'prior_va_vah': 19990.0,   # open (19999) > VAH → LONG allowed
+        'prior_va_val': 19980.0,
+    }
+
+
+@pytest.fixture
+def short_session_context():
+    """Context where session opens below prior VAL → SHORT allowed."""
+    return {
+        'day_type': 'neutral',
+        'trend_strength': 'moderate',
+        'bar_time': _time(11, 0),
+        'atr14': 16.0,
+        'prior_va_vah': 20010.0,   # open (19999) < VAL → SHORT allowed
+        'prior_va_val': 20005.0,
     }
 
 
@@ -143,17 +159,17 @@ class TestAcceptance:
         assert sig is not None  # 3 of 3 → LONG
         assert sig.direction == 'LONG'
 
-    def test_short_acceptance_after_3_consecutive(self, strategy, session_context):
+    def test_short_acceptance_after_3_consecutive(self, strategy, short_session_context):
         """3 consecutive 5-min closes below IBL should trigger SHORT."""
-        session_context['ib_bars'] = make_ib_bars()
-        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+        short_session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, short_session_context)
 
         # 3 consecutive 5-min bars below IBL (bar indices 4, 9, 14)
-        sig = strategy.on_bar(make_bar(19940), 4, session_context)
+        sig = strategy.on_bar(make_bar(19940), 4, short_session_context)
         assert sig is None
-        sig = strategy.on_bar(make_bar(19935), 9, session_context)
+        sig = strategy.on_bar(make_bar(19935), 9, short_session_context)
         assert sig is None
-        sig = strategy.on_bar(make_bar(19930), 14, session_context)
+        sig = strategy.on_bar(make_bar(19930), 14, short_session_context)
         assert sig is not None
         assert sig.direction == 'SHORT'
 
@@ -175,18 +191,24 @@ class TestAcceptance:
         sig = strategy.on_bar(make_bar(20070), 29, session_context)
         assert sig is not None  # Now 3 consecutive → LONG
 
-    def test_direction_switch_resets_counter(self, strategy, session_context):
+    def test_direction_switch_resets_counter(self, strategy):
         """Closing below IBL after closing above IBH resets the above counter."""
-        session_context['ib_bars'] = make_ib_bars()
-        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+        # Need LONG allowed to test above-IBH counting, direction gate blocks SHORT
+        ctx = {
+            'day_type': 'neutral', 'trend_strength': 'moderate',
+            'bar_time': _time(11, 0), 'atr14': 16.0,
+            'prior_va_vah': 19990.0, 'prior_va_val': 19980.0,
+            'ib_bars': make_ib_bars(),
+        }
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, ctx)
 
         # 2 closes above IBH
-        strategy.on_bar(make_bar(20060), 4, session_context)
-        strategy.on_bar(make_bar(20065), 9, session_context)
+        strategy.on_bar(make_bar(20060), 4, ctx)
+        strategy.on_bar(make_bar(20065), 9, ctx)
         assert strategy._consec_above == 2
 
         # Close below IBL → above resets, below starts
-        strategy.on_bar(make_bar(19940), 14, session_context)
+        strategy.on_bar(make_bar(19940), 14, ctx)
         assert strategy._consec_above == 0
         assert strategy._consec_below == 1
 
@@ -221,15 +243,15 @@ class TestStopTarget:
         assert sig.stop_price == pytest.approx(20070 - risk, abs=0.01)
         assert sig.target_price == pytest.approx(20070 + TARGET_R_MULTIPLE * risk, abs=0.01)
 
-    def test_short_stop_target(self, strategy, session_context):
+    def test_short_stop_target(self, strategy, short_session_context):
         """SHORT: stop = entry + 2*ATR, target = entry - 2*risk."""
-        session_context['ib_bars'] = make_ib_bars()
-        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+        short_session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, short_session_context)
         atr = strategy._atr14
 
-        strategy.on_bar(make_bar(19940), 4, session_context)
-        strategy.on_bar(make_bar(19935), 9, session_context)
-        sig = strategy.on_bar(make_bar(19930), 14, session_context)
+        strategy.on_bar(make_bar(19940), 4, short_session_context)
+        strategy.on_bar(make_bar(19935), 9, short_session_context)
+        sig = strategy.on_bar(make_bar(19930), 14, short_session_context)
 
         assert sig is not None
         risk = ATR_STOP_MULT * atr
@@ -332,13 +354,13 @@ class TestSignalMetadata:
         assert 'risk_pts' in sig.metadata
         assert sig.metadata['acceptance_bars'] == 3
 
-    def test_short_signal_setup_type(self, strategy, session_context):
-        session_context['ib_bars'] = make_ib_bars()
-        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+    def test_short_signal_setup_type(self, strategy, short_session_context):
+        short_session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, short_session_context)
 
-        strategy.on_bar(make_bar(19940), 4, session_context)
-        strategy.on_bar(make_bar(19935), 9, session_context)
-        sig = strategy.on_bar(make_bar(19930), 14, session_context)
+        strategy.on_bar(make_bar(19940), 4, short_session_context)
+        strategy.on_bar(make_bar(19935), 9, short_session_context)
+        sig = strategy.on_bar(make_bar(19930), 14, short_session_context)
 
         assert sig.setup_type == "20P_IB_EXT_SHORT"
 
@@ -360,3 +382,73 @@ class TestATRComputation:
         df = pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
         atr = _compute_atr14(df)
         assert atr == 20.0  # Default fallback
+
+
+# --- Prior VA Prerequisite ---
+
+class TestPriorVAPrerequisite:
+    def test_no_signal_when_open_inside_va(self, strategy):
+        """Session opens inside prior VA → no trades allowed."""
+        ctx = {
+            'day_type': 'neutral', 'trend_strength': 'moderate',
+            'bar_time': _time(11, 0), 'atr14': 16.0,
+            'prior_va_vah': 20010.0,  # open (19999) is inside VA
+            'prior_va_val': 19990.0,
+            'ib_bars': make_ib_bars(),
+        }
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, ctx)
+        assert strategy._allowed_direction is None
+
+        # 3 consecutive above IBH → still blocked
+        strategy.on_bar(make_bar(20060), 4, ctx)
+        strategy.on_bar(make_bar(20065), 9, ctx)
+        sig = strategy.on_bar(make_bar(20070), 14, ctx)
+        assert sig is None
+
+    def test_no_signal_without_prior_va(self, strategy):
+        """Missing prior VA data → no trades."""
+        ctx = {
+            'day_type': 'neutral', 'trend_strength': 'moderate',
+            'bar_time': _time(11, 0), 'atr14': 16.0,
+            'ib_bars': make_ib_bars(),
+        }
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, ctx)
+        assert strategy._allowed_direction is None
+
+    def test_long_blocked_when_short_allowed(self, strategy, short_session_context):
+        """Open below VAL → SHORT only. LONG acceptance should be blocked."""
+        short_session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, short_session_context)
+        assert strategy._allowed_direction == 'SHORT'
+
+        # 3 consecutive above IBH → LONG direction blocked
+        strategy.on_bar(make_bar(20060), 4, short_session_context)
+        strategy.on_bar(make_bar(20065), 9, short_session_context)
+        sig = strategy.on_bar(make_bar(20070), 14, short_session_context)
+        assert sig is None
+
+
+# --- 13:00 Entry Cutoff ---
+
+class TestEntryCutoff:
+    def test_no_entry_after_1300(self, strategy, session_context):
+        """13:00 ET cutoff for new entries."""
+        session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+
+        session_context['bar_time'] = _time(13, 1)
+        strategy.on_bar(make_bar(20060), 4, session_context)
+        strategy.on_bar(make_bar(20065), 9, session_context)
+        sig = strategy.on_bar(make_bar(20070), 14, session_context)
+        assert sig is None
+
+    def test_entry_before_1300(self, strategy, session_context):
+        """Entries allowed before 13:00."""
+        session_context['ib_bars'] = make_ib_bars()
+        session_context['bar_time'] = _time(12, 0)
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+
+        strategy.on_bar(make_bar(20060), 4, session_context)
+        strategy.on_bar(make_bar(20065), 9, session_context)
+        sig = strategy.on_bar(make_bar(20070), 14, session_context)
+        assert sig is not None

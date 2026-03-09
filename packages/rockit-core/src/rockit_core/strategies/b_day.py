@@ -62,7 +62,7 @@ class BDayStrategy(StrategyBase):
 
     @property
     def applicable_day_types(self) -> List[str]:
-        return ['b_day', 'neutral', 'p_day']
+        return []  # All day types — study says day type is unpredictable at IB close
 
     def on_session_start(self, session_date, ib_high, ib_low, ib_range, session_context):
         self._ib_high = ib_high
@@ -76,10 +76,6 @@ class BDayStrategy(StrategyBase):
         self._vwap_aligned = False
 
     def on_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
-        day_type = session_context.get('day_type', '')
-        if day_type not in self.applicable_day_types:
-            return None
-
         # Already traded this session
         if self._val_fade_taken:
             return None
@@ -108,13 +104,16 @@ class BDayStrategy(StrategyBase):
                 return None  # Still waiting
 
             # Phase 3: Check acceptance at bar 30
+            # Study: "closes inside IB" = close > IBL AND close < IBH
+            # This naturally excludes trend days where price runs past IBH
             if bars_since_touch == BDAY_ACCEPTANCE_BARS:
-                if current_price > self._ib_low:
-                    # Acceptance confirmed — enter LONG
+                if current_price > self._ib_low and current_price < self._ib_high:
+                    # Acceptance confirmed — price is inside IB → ENTER LONG
                     entry_price = current_price
                     stop_price = self._ib_low - (self._ib_range * BDAY_STOP_IB_BUFFER)
                     target_price = self._ib_mid
 
+                    # R:R sanity check — skip if risk > 2.5x reward
                     risk = abs(entry_price - stop_price)
                     reward = abs(target_price - entry_price)
                     if reward > 0 and risk / reward > 2.5:
@@ -133,11 +132,11 @@ class BDayStrategy(StrategyBase):
                         target_price=target_price,
                         strategy_name=self.name,
                         setup_type='B_DAY_IBL_FADE',
-                        day_type=day_type,
+                        day_type=session_context.get('day_type', ''),
                         confidence=confidence,
                     )
                 else:
-                    # Failed acceptance — reset (but first touch already taken, no more trades)
+                    # Failed acceptance — reset (first touch consumed, no more trades)
                     self._touch_bar_index = None
                     return None
 

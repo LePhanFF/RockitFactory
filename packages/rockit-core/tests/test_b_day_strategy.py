@@ -47,20 +47,23 @@ def make_bar(close, low=None, high=None, vwap=None, timestamp=None):
 # --- Day Type Tests ---
 
 class TestApplicableDayTypes:
-    def test_includes_b_day(self, strategy):
-        assert 'b_day' in strategy.applicable_day_types
+    def test_all_day_types_allowed(self, strategy):
+        """Study: day type is unpredictable at IB close — all types allowed."""
+        assert strategy.applicable_day_types == []
 
-    def test_includes_neutral(self, strategy):
-        assert 'neutral' in strategy.applicable_day_types
-
-    def test_includes_p_day(self, strategy):
-        assert 'p_day' in strategy.applicable_day_types
-
-    def test_rejects_trend_up(self, strategy):
+    def test_accepts_trend_up(self, strategy):
+        """No day type filter — trend_up sessions qualify for acceptance model."""
         strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
         ctx = {'day_type': 'trend_up', 'bar_time': _time(11, 0)}
-        bar = make_bar(14905, low=14895, timestamp=datetime.now())
-        assert strategy.on_bar(bar, 0, ctx) is None
+
+        # Touch IBL
+        touch_bar = make_bar(14910, low=14898, timestamp=datetime.now())
+        strategy.on_bar(touch_bar, 0, ctx)
+
+        # Acceptance at bar 30
+        accept_bar = make_bar(14920, low=14915, timestamp=datetime.now())
+        signal = strategy.on_bar(accept_bar, BDAY_ACCEPTANCE_BARS, ctx)
+        assert signal is not None
 
     def test_accepts_neutral(self, strategy, session_context):
         """Neutral day type should allow entry through acceptance model."""
@@ -131,14 +134,14 @@ class TestAcceptanceModel:
         assert signal is None
 
     def test_no_second_trade_after_failed_acceptance(self, strategy, session_context):
-        """After failed acceptance, first-touch is consumed — no more trades."""
+        """After failed acceptance at bar 30, first-touch is consumed — no more trades."""
         strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
 
         # Touch #1
         touch_bar = make_bar(14910, low=14895, timestamp=datetime.now())
         strategy.on_bar(touch_bar, 0, session_context)
 
-        # Fail acceptance
+        # Fail acceptance at bar 30
         fail_bar = make_bar(14890, low=14880, timestamp=datetime.now())
         strategy.on_bar(fail_bar, BDAY_ACCEPTANCE_BARS, session_context)
 
@@ -271,9 +274,8 @@ class TestStopTargetRR:
         assert signal.stop_price == 14900 - (100 * 0.1)  # 14890
         assert signal.target_price == 14950  # IB midpoint
 
-    def test_rr_safety_rejects_bad_trade(self, strategy, session_context):
-        """If risk/reward > 2.5, skip the trade."""
-        # Set up a scenario where entry is very close to target but far from stop
+    def test_rr_filter_rejects_bad_trade(self, strategy, session_context):
+        """R:R > 2.5 → skip. Entry near target = tiny reward, big risk."""
         # IB: 15000-14900, mid=14950, stop=14890
         # Entry at 14945 → risk=55, reward=5 → R:R=11 → SKIP
         strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
@@ -283,6 +285,19 @@ class TestStopTargetRR:
 
         # Entry near target
         accept = make_bar(14945, low=14940, timestamp=datetime.now())
+        signal = strategy.on_bar(accept, BDAY_ACCEPTANCE_BARS, session_context)
+        assert signal is None
+
+    def test_rejects_close_above_ibh(self, strategy, session_context):
+        """Study: acceptance = close INSIDE IB (> IBL AND < IBH).
+        If price ran above IBH, it's a trend day — not acceptance."""
+        strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
+
+        touch = make_bar(14910, low=14898, timestamp=datetime.now())
+        strategy.on_bar(touch, 0, session_context)
+
+        # Price above IBH at bar 30 — NOT inside IB, failed acceptance
+        accept = make_bar(15010, low=15000, timestamp=datetime.now())
         signal = strategy.on_bar(accept, BDAY_ACCEPTANCE_BARS, session_context)
         assert signal is None
 

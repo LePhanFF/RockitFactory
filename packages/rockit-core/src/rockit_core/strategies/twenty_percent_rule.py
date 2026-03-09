@@ -22,6 +22,7 @@ Max 1 entry per session.
 """
 
 from typing import Optional, List
+from datetime import time as _time
 import pandas as pd
 
 from rockit_core.strategies.base import StrategyBase
@@ -83,8 +84,31 @@ class TwentyPercentRule(StrategyBase):
         else:
             self._atr14 = session_context.get('atr14', 20.0)
 
+        # Prerequisite: session must open outside prior VA
+        # Open > prior VAH → LONG only; Open < prior VAL → SHORT only
+        self._allowed_direction = None  # None = don't trade this session
+        prior_vah = session_context.get('prior_va_vah')
+        prior_val = session_context.get('prior_va_val')
+
+        if ib_bars is not None and len(ib_bars) > 0 and prior_vah is not None and prior_val is not None:
+            session_open = ib_bars.iloc[0]['open']
+            if not pd.isna(prior_vah) and not pd.isna(prior_val) and not pd.isna(session_open):
+                if session_open > prior_vah:
+                    self._allowed_direction = 'LONG'
+                elif session_open < prior_val:
+                    self._allowed_direction = 'SHORT'
+
     def on_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
         if self._triggered or self._entry_count >= MAX_ENTRIES_PER_SESSION:
+            return None
+
+        # Session must open outside prior VA
+        if self._allowed_direction is None:
+            return None
+
+        # 13:00 ET entry cutoff
+        bar_time = session_context.get('bar_time')
+        if bar_time and bar_time >= _time(13, 0):
             return None
 
         current_price = bar['close']
@@ -113,6 +137,10 @@ class TwentyPercentRule(StrategyBase):
         elif self._consec_below >= ACCEPT_5M_BARS:
             direction = 'SHORT'
         else:
+            return None
+
+        # Direction must match gap (open outside prior VA)
+        if direction != self._allowed_direction:
             return None
 
         # Compute stop and target
