@@ -470,42 +470,77 @@ def rule_11_neutral_upper_lower(snapshot: Dict[str, Any]) -> str:
 
 def rule_13_morph_status(snapshot: Dict[str, Any]) -> str:
     """
-    Rule 13: Generate morph status based on TPO hold time and shaping.
+    Rule 13: Generate morph status based on IB extension and DPOC migration.
+
+    Uses IB extension directly (not just DPOC regime) so morph detection works
+    as soon as price breaks IB, even before DPOC has enough completed slices.
 
     Logic:
-    - 15-min shaping above IBH/below IBL but < 30-min → "Potential morph to Trend Up/Down"
-    - ≥30-min hold/close → "Morphing confirmed to Trend Up/Down"
-    - ≥60-min hold → "Super-trending locked"
-    - No morph signals → "Locked no morph" or "NA"
+    - Price holding beyond IB for 15+ mins → "Potential morph"
+    - 30+ mins hold → "Morphing confirmed"
+    - >1.5x IB extension → "Trend day confirmed"
+    - DPOC trending_on_the_move + high retention → "Super-trending locked"
 
     Returns: String describing morph status
     """
     intraday = snapshot.get("intraday", {})
+    ib = intraday.get("ib", {})
     dpoc_migration = intraday.get("dpoc_migration", {})
-    dpoc_history = dpoc_migration.get("dpoc_history", [])
 
-    if not dpoc_history or len(dpoc_history) < 1:
+    ib_high = ib.get("ib_high")
+    ib_low = ib.get("ib_low")
+    ib_range = ib.get("ib_range", 0)
+    current_close = ib.get("current_close")
+
+    # Pre-IB: can't assess morph
+    current_et_time = snapshot.get("current_et_time", "09:30")
+    try:
+        ct = time(*map(int, current_et_time.split(':')))
+        if ct < time(10, 30):
+            return "NA"
+    except (ValueError, AttributeError):
         return "NA"
 
-    # Count completed slices above/below IB extremes
-    # This is approximate: track how many consecutive slices held above IBH or below IBL
-    # Simplified: use dpoc_regime as proxy for 30-min hold strength
-    dpoc_regime = dpoc_migration.get("dpoc_regime", "transitional_unclear")
+    if not ib_high or not ib_low or not ib_range or ib_range == 0 or not current_close:
+        return "NA"
+
+    # Calculate IB extension
+    ext_above = max(0, current_close - ib_high)
+    ext_below = max(0, ib_low - current_close)
+    extension = max(ext_above, ext_below)
+    ext_mult = extension / ib_range if ib_range > 0 else 0
+    ext_dir = "up" if ext_above > ext_below else "down" if ext_below > ext_above else "flat"
+
+    # DPOC regime (may be None if insufficient slices — that's OK)
+    dpoc_regime = dpoc_migration.get("dpoc_regime", "")
     direction = dpoc_migration.get("direction", "flat")
     relative_retain = dpoc_migration.get("relative_retain_percent", 0)
 
-    if dpoc_regime == "trending_on_the_move" and relative_retain >= 70:
-        if direction == "up":
-            return "Morphing to Trend Up confirmed — watching for 60-min escalation"
-        elif direction == "down":
-            return "Morphing to Trend Down confirmed — watching for 60-min escalation"
-    elif dpoc_regime in ["trending_fading_momentum", "stabilizing_hold forming_ceiling", "stabilizing_hold forming_floor"]:
-        if direction == "up":
-            return "Potential morph to Trend Up — watching 30-min confirmation"
-        elif direction == "down":
-            return "Potential morph to Trend Down — watching 30-min confirmation"
+    # Super-trending: DPOC confirms + large extension
+    if dpoc_regime == "trending_on_the_move" and relative_retain >= 70 and ext_mult >= 1.0:
+        dir_label = "Up" if ext_dir == "up" or direction == "up" else "Down"
+        return f"Trend {dir_label} confirmed — super-trending ({ext_mult:.1f}x IB extension, DPOC on the move)"
 
-    return "Locked no morph"
+    # Strong trend: >1.0x IB extension (even without DPOC confirmation)
+    if ext_mult >= 1.0:
+        dir_label = "Up" if ext_dir == "up" else "Down"
+        return f"Morphing to Trend {dir_label} confirmed — {ext_mult:.1f}x IB extension"
+
+    # Moderate extension: 0.5-1.0x → potential morph
+    if ext_mult >= 0.5:
+        dir_label = "Up" if ext_dir == "up" else "Down"
+        return f"Potential morph to Trend {dir_label} — {ext_mult:.1f}x IB extension, watching for continuation"
+
+    # Small extension with DPOC trending → potential morph
+    if dpoc_regime in ["trending_fading_momentum", "trending_on_the_move"]:
+        dir_label = "Up" if direction == "up" else "Down"
+        return f"Potential morph to Trend {dir_label} — DPOC {dpoc_regime.replace('_', ' ')}"
+
+    # No morph signals
+    if ext_mult < 0.2:
+        return "No morph — price inside IB range"
+
+    return "Developing — watching for IB extension"
 
 
 # ============================================================================
@@ -763,32 +798,71 @@ def apply_inference_rules(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 def _infer_day_type(snapshot: Dict[str, Any], bias: str, trend_strength: str) -> str:
     """
-    Infer day_type from bias and trend signals.
+    Infer day_type from IB extension, bias, trend strength, and DPOC regime.
 
-    Placeholder implementation for Phase 1. Phase 2 will implement full logic:
-    - Trend Up/Down
-    - Open Drive/Auction
-    - Double Distribution
-    - Neutral Range
-    - Balance
+    Uses IB extension data directly (not just DPOC regime) so classification
+    works even before DPOC has enough completed slices.
     """
-    dpoc_migration = snapshot.get("intraday", {}).get("dpoc_migration", {})
+    intraday = snapshot.get("intraday", {})
+    ib = intraday.get("ib", {})
+    dpoc_migration = intraday.get("dpoc_migration", {})
     dpoc_regime = dpoc_migration.get("dpoc_regime", "")
     direction = dpoc_migration.get("direction", "flat")
 
-    # Simple heuristic for Phase 1
-    if "Trend" in bias or trend_strength in ["Strong", "Super"]:
-        if direction == "up":
-            return "Trend Up"
-        elif direction == "down":
-            return "Trend Down"
+    ib_high = ib.get("ib_high")
+    ib_low = ib.get("ib_low")
+    ib_range = ib.get("ib_range", 0)
+    current_close = ib.get("current_close")
 
+    # Calculate IB extension directly
+    ext_direction = "flat"
+    extension_mult = 0.0
+    if ib_high and ib_low and ib_range and ib_range > 0 and current_close:
+        ext_above = max(0, current_close - ib_high)
+        ext_below = max(0, ib_low - current_close)
+        if ext_above > ext_below:
+            extension_mult = ext_above / ib_range
+            ext_direction = "up"
+        elif ext_below > ext_above:
+            extension_mult = ext_below / ib_range
+            ext_direction = "down"
+
+    # Strong/Super trend strength or large IB extension → Trend day
+    if trend_strength in ["Strong", "Super"]:
+        return "Trend Up" if ext_direction == "up" or direction == "up" else \
+               "Trend Down" if ext_direction == "down" or direction == "down" else "Trend Up"
+
+    # >1.0x IB extension → Trend day even without DPOC confirmation
+    if extension_mult >= 1.0:
+        return "Trend Up" if ext_direction == "up" else "Trend Down"
+
+    # DPOC regime trending → Trend day
     if dpoc_regime == "trending_on_the_move":
         return "Trend Up" if direction == "up" else "Trend Down"
 
-    if dpoc_regime in ["balancing_choppy", "transitional_unclear"]:
+    # 0.5-1.0x IB extension → P-Day (directional but not full trend)
+    if extension_mult >= 0.5:
+        return "P-Day Up" if ext_direction == "up" else "P-Day Down"
+
+    # Bias-based classification
+    if bias in ["Very Bullish", "Very Bearish"]:
+        return "Trend Up" if "Bullish" in bias else "Trend Down"
+
+    # Confirmed choppy DPOC + price inside IB → Balance
+    if dpoc_regime == "balancing_choppy" and extension_mult < 0.3:
         return "Balance"
 
+    # 0.2-0.5x extension with fading momentum → P-Day (marginal breakout)
+    if extension_mult >= 0.2 and dpoc_regime == "trending_fading_momentum":
+        return "P-Day Up" if ext_direction == "up" else "P-Day Down"
+
+    # Inside IB with no meaningful extension → Neutral Range or Balance
+    if extension_mult < 0.2:
+        if dpoc_regime in ["balancing_choppy", "transitional_unclear"]:
+            return "Balance"
+        return "Neutral Range"
+
+    # Small extension (0.2-0.5x) with unclear DPOC → Neutral Range
     return "Neutral Range"
 
 

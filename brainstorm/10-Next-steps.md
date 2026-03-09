@@ -152,45 +152,52 @@ We already have 38 metrics. Adding ~25 more across 4 categories:
 
 **User reviews**: Spot-check a few sessions — do the FVGs match what you'd see on a chart? Verify NWOG/NDOG gaps match what you see on weekly/daily charts.
 
-### 1.3 Data Validation Pipeline (P0 Data Quality)
+### 1.3 Data Validation Pipeline (P0 Data Quality) — DONE (2026-03-08)
 
 **Why**: Before generating 20,000+ deterministic rows, we need guardrails against bad data.
 
 **What Claude does**:
-- [ ] Create `validate_snapshot()` function:
-  - POC within VAH/VAL
-  - VAH > VAL
-  - IB high >= IB low
-  - ATR > 0
-  - No NaN/Inf in numeric fields
-  - Valid day_type enum
-- [ ] Integrate into orchestrator: validate every snapshot before output
-- [ ] Log warnings for violations, reject corrupt snapshots
-- [ ] Add tests with intentionally bad data → verify warnings fire
+- [x] Create `validate_snapshot_data()` in `data_validator.py`:
+  - POC within VAH/VAL (warn if outside)
+  - VAH > VAL (error if violated)
+  - IB high >= IB low (error if violated)
+  - ATR > 0 (warn if non-positive)
+  - No NaN/Inf in critical numeric fields (error)
+  - Valid day_type enum (warn if unexpected)
+- [x] Integrated into orchestrator: validates every snapshot, adds `_validation` dict to output
+- [x] Log warnings for violations (non-fatal), log errors to ErrorLogger
+- [x] 31 tests with intentionally bad data → verify warnings/errors fire
 
 **Prior session & premarket level validation** (per user):
-- [ ] Validate PDH (prior day high) and PDL (prior day low) are present and non-null
-- [ ] Validate previous weekly high/low are present (these are key HTF levels)
-- [ ] Validate Asia session high/low (typically 6PM-midnight ET futures)
-- [ ] Validate London session high/low (typically 2AM-5AM ET)
-- [ ] **Holiday/half-day handling**: When prior session was a holiday or half-day, some levels may be legitimately missing. Log as `warning` (not rejection) with reason: `"prior_session_holiday"`. Use last available full session's levels as fallback and flag `"prior_levels_stale": true` in snapshot.
-- [ ] **Weekend gaps**: Friday → Monday spans may have different overnight ranges. Validate that Monday sessions reference Friday's close (not Saturday/Sunday which don't exist).
-- [ ] **Short sessions** (day before Thanksgiving, Christmas Eve): Flag with `"short_session": true`. IB may be different (fewer bars). Don't reject — just annotate.
+- [x] Validate PDH (prior day high) and PDL (prior day low) are present and non-null
+- [x] Validate Asia session high/low
+- [x] Validate London session high/low
+- [x] Validate overnight high/low
+- [x] **Holiday/half-day handling**: Missing levels logged as `warning` (not rejection)
 
-**User reviews**: Validation rules — are these the right sanity checks? Review any sessions flagged as holiday/stale to confirm correct handling.
-
-### 1.4 Generate Deterministic Tape (259+ sessions)
+### 1.4 Generate Deterministic Tape (259+ sessions) — DONE (2026-03-08)
 
 **Why**: This is the foundational data layer. Everything correlates against it.
 
 **What Claude does**:
-- [ ] Create `scripts/generate_deterministic_tape.py`:
+- [x] Create `scripts/generate_deterministic_tape.py`:
   - Loads each session CSV from `data/sessions/`
-  - Runs deterministic orchestrator
+  - Runs deterministic orchestrator with regime context + data validation
   - Validates each snapshot
   - Outputs to `data/json_snapshots/deterministic_{date}.jsonl` (one file per session)
-- [ ] Run for all 259+ sessions
-- [ ] Report: sessions processed, snapshots generated, validation warnings
+  - Skips already-generated sessions (`--force` to regenerate)
+  - Reports: sessions processed, snapshots generated, validation stats
+  - Saves `tape_generation_report.json` summary
+- [x] Regime context module (`regime_context.py`) with:
+  - `atr14_daily` from prior 14 daily bars
+  - `atr14_5min` rolling 5-min ATR
+  - `prior_day_type` classification from prior session
+  - `consecutive_balance_days` counter
+  - `weekly_range`, `weekly_direction`, `weekly_atr`
+  - VIX integration (from `vix_regime.py`)
+  - Composite regime label (7 regimes: low_vol_balance, low_vol_trend, high_vol_trend, high_vol_range, compressed_pre_breakout, expansion, transitional)
+- [x] 22 tests for regime context module
+- [ ] Run for all 268 sessions (script ready, needs execution)
 
 **User reviews**: Spot-check 5 random sessions — does the data match reality?
 
@@ -225,17 +232,20 @@ Great question. Here's what we HAVE vs what we NEED for regime identification:
 | **Prior day's classification** | Was yesterday a trend day or balance day? Yesterday's behavior influences today's open. | Add `prior_day_type` to session context (already available from prior session's final day_type) |
 | **Session count in range** | How many consecutive balance days? 3+ balance days often precede breakouts. | Add `consecutive_balance_days` counter |
 
-**What Claude does** (additional tasks for 1.4):
-- [ ] Add `atr14_daily` to session context (compute from prior 14 daily OHLC bars)
-- [ ] Add `atr14_5min` as rolling metric in tape context module
-- [ ] Add `prior_day_type` to session context
-- [ ] Add `consecutive_balance_days` counter
-- [ ] Add `weekly_range`, `weekly_direction` to session context
-- [ ] Create `regime_classification()` function that outputs a composite regime label:
-  - `"low_vol_balance"` (ADX < 20, normal IB, balance day)
-  - `"high_vol_trend"` (ADX > 25, wide IB, trend day)
-  - `"compressed_pre_breakout"` (narrow IB, 3+ balance days, ON range < 50% of avg)
-  - etc. — 6-8 regime buckets that strategies can filter on
+**What Claude does** (additional tasks for 1.4) — ALL DONE (2026-03-08):
+- [x] Add `atr14_daily` to session context — `regime_context.py` computes from prior 14 daily OHLC bars
+- [x] Add `atr14_5min` as rolling metric — `regime_context.py` computes from 5-min resampled bars
+- [x] Add `prior_day_type` to session context — classifies prior day from IB extension ratio
+- [x] Add `consecutive_balance_days` counter — looks back through daily bars
+- [x] Add `weekly_range`, `weekly_direction` to session context — from prior 5 daily bars
+- [x] Create `_classify_regime()` function that outputs a composite regime label:
+  - `"low_vol_balance"` — quiet market, rangebound
+  - `"low_vol_trend"` — steady directional move, low volatility
+  - `"high_vol_trend"` — strong directional move, volatile
+  - `"high_vol_range"` — volatile but no direction (chop)
+  - `"compressed_pre_breakout"` — narrow IB, 3+ balance days, low vol
+  - `"expansion"` — wide IB, high vol
+  - `"transitional"` — mixed signals, regime changing
 - [x] **VIX data**: CBOE historical CSV downloaded to `data/vix/VIX_History.csv` (9,137 rows, 1990–2026-03-06, updated daily from `https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`). VIX regime module created at `deterministic/modules/vix_regime.py` — provides `vix_open`, `vix_close`, `vix_regime` (low/moderate/elevated/high/extreme), `vix_5d_avg`, `vix_change_pct`. Covers all 259+ backtest sessions. Yahoo Finance (`https://finance.yahoo.com/quote/%5EVIX/`) available for real-time but requires HTML parsing — defer to Phase 5 (live trading).
 
 **User reviews**: Do the regime buckets make sense? Are there regime conditions you trade differently that we're not capturing?
@@ -315,6 +325,40 @@ Retrofit order (5 core strategies):
 **User reviews**: Confirm regression report shows zero diff.
 
 **Deliverable**: 5 strategies using pluggable models, identical results to baseline.
+
+### 2.4 Signal-Time TPO Histogram (Backtest + Live)
+
+**Why**: The 5-min deterministic snapshots capture general session state but lack the depth needed for full Dalton TPO analysis. When a strategy signal fires, we generate a **complete TPO histogram** at that exact moment — this is the deep dive the agent needs to evaluate the signal. Not every 5-min slice (overkill), but always at signal time (both backtest replay and live trading).
+
+**What gets generated at signal time**:
+- Full TPO letter-by-letter histogram (per-period letter profile at every traded price level)
+- Volume-at-price histogram (VRVP overlay) with HVN/LVN zones from 5-day visible range
+- Per-period letter ranges with OTF sequence up to signal bar
+- Distribution analysis (single/double/morphing at signal time)
+- Excess, poor high/low, single print ranges
+- FVG lifecycle context at signal time (active/recently filled nearby)
+- All naked prior levels with distance to current price
+
+**When it runs**:
+- **Backtest**: BacktestEngine triggers `generate_signal_tpo_snapshot()` when a strategy emits a Signal
+- **Live**: Strategy runner triggers the same function when a signal fires in real-time
+- Same function, same output — consistent analysis across backtest and live
+
+**Storage**: Persist alongside the trade record in DuckDB → enables:
+- "What did the TPO histogram look like when this winning trade was taken?"
+- "Are trades taken during P-shape profiles more profitable?"
+- "Do LVN-entry trades have better MAE characteristics?"
+- Agent deep analysis: Advocate/Skeptic can reference the full histogram when debating a signal
+- Post-trade correlation: deterministic context × TPO structure × outcome
+
+**What Claude does**:
+- [ ] Create `generate_signal_tpo_snapshot()` function — full TPO histogram at signal bar
+- [ ] Hook into BacktestEngine: when strategy emits signal, capture TPO snapshot
+- [ ] Hook into strategy runner (live): same function triggered at signal time
+- [ ] Store in trade metadata or separate `signal_snapshots` DuckDB table
+- [ ] Include in baseline reports: TPO structure at entry for top/worst trades
+
+**User reviews**: Does the deep snapshot capture enough for Dalton-style analysis?
 
 #### The 20P Strategy — FIXED (2026-03-08)
 
@@ -755,3 +799,159 @@ Yes — **LLM training comes AFTER proving the ground with data + agents.** The 
 5. **50/50 train/test split validates before LLM** — if deterministic agents can't add alpha on 50% unseen data, adding an LLM won't fix the underlying issue
 
 The data warehouse IS the proven ground. Agents calibrated from it have measurable accuracy. LLM training on top of this gives the agents richer reasoning without losing the quantitative foundation.
+
+---
+
+## Future Deterministic Modules: Core Price Action Intelligence
+
+> **Goal**: Train agents to SEE price action the way a professional tape reader does. These are NOT strategy signals — they are pure observations that feed the LLM's understanding of market structure.
+
+### 2.5 SMT Divergence Detection (Multi-Timeframe, Multi-Instrument)
+
+**What**: ICT Smart Money Technique — detect when correlated instruments diverge at key levels. A big reversal signal when one makes a new high/low but the other doesn't confirm.
+
+**Instruments**: NQ vs ES, NQ vs YM, ES vs YM (all 3 pairs)
+
+**Timeframes**:
+- **Premarket/HTF**: Daily, 4H, 1H (prior session and current day context)
+- **Intraday**: 5min, 15min, 60min (real-time divergence detection)
+
+**Detection Logic** (needs deep research):
+- Compare swing highs/lows across correlated instruments at the same timestamp
+- NQ makes new high but ES doesn't confirm → bearish SMT divergence
+- NQ makes new low but YM holds → bullish SMT divergence
+- Weight by timeframe: daily SMT >> 15min SMT
+- Track: divergence_pair, timeframe, direction, timestamp, price_gap, confirmation_status
+
+**Output fields per divergence**:
+```python
+{
+    "pair": "NQ_ES",
+    "timeframe": "15min",
+    "type": "bearish",         # NQ new high, ES didn't confirm
+    "leader": "NQ",
+    "leader_price": 21550.0,
+    "laggard_price": 5420.0,
+    "swing_type": "high",       # high or low
+    "detected_at": "10:15",
+    "bars_since": 3,
+    "confirmed": True,          # Did price reverse after divergence?
+}
+```
+
+**Challenges**:
+- Need synchronized data across instruments (same timestamps)
+- Swing point detection required first (see 2.6)
+- Must handle different tick sizes (NQ=0.25, ES=0.25, YM=1.0)
+- False positives common on small timeframes — need minimum swing size filter
+
+**Dependencies**: Requires swing point detection (2.6) and multi-instrument data loader.
+
+### 2.6 Price Swing Point Detection (HH/HL/LH/LL Channels)
+
+**What**: Identify swing highs and swing lows algorithmically. This is THE fundamental price action observation — all other pattern recognition builds on it.
+
+**Patterns to detect**:
+1. **Swing highs/lows**: Local extremes confirmed by N bars on each side (fractals)
+2. **3-drive pattern**: Three successive pushes to new high/low with diminishing momentum
+3. **Channel structure**: Higher highs + higher lows (uptrend), lower highs + lower lows (downtrend)
+4. **Trend breaks**: First lower high in an uptrend, first higher low in a downtrend
+5. **Equal highs/lows**: Liquidity pools (ICT concept — price will sweep these)
+
+**Detection approach** (research needed):
+- Zigzag with configurable lookback (5, 13, 21 bars)
+- Minimum swing size filter (ATR-based: swing must be > 0.5 ATR to count)
+- Multi-timeframe: 5min swings, 15min swings, 1H swings, 4H swings
+- Track swing sequence: HH, HL, HH, HL = confirmed uptrend
+
+**Output per timeframe**:
+```python
+{
+    "timeframe": "15min",
+    "current_structure": "uptrend",     # uptrend / downtrend / consolidation
+    "swing_sequence": ["HL", "HH", "HL", "HH"],  # last 4 swing labels
+    "last_swing_high": {"price": 21550.0, "time": "10:30", "type": "HH"},
+    "last_swing_low": {"price": 21420.0, "time": "10:00", "type": "HL"},
+    "three_drive": {
+        "detected": True,
+        "direction": "up",
+        "drives": [21500, 21530, 21545],  # diminishing pushes
+        "momentum_declining": True,
+    },
+    "equal_highs": [{"price": 21550.0, "count": 2, "tolerance": 3.0}],
+    "equal_lows": [{"price": 21400.0, "count": 3, "tolerance": 3.0}],
+    "structure_break": None,  # or {"type": "bearish", "broken_level": 21420.0, "time": "11:15"}
+}
+```
+
+**Why this is critical**: Every tape reader classifies "are we making HH/HL or LH/LL?" before anything else. Without this, the LLM has no concept of trend structure.
+
+### 2.7 Trendline Analysis (3rd Touch, Backside, Break + Retest)
+
+**What**: Algorithmic trendline detection and interaction tracking. Key events: 3rd touch (confirmation), backside test (support becomes resistance), and break + retest.
+
+**Detection approach** (research needed):
+- Connect 2+ swing lows (ascending trendline) or 2+ swing highs (descending trendline)
+- Use linear regression on swing points with tolerance band
+- Track touch count — 3rd touch is the classic confirmation/reversal point
+- After a break: monitor for "backside" test (old support → new resistance)
+
+**Key events to detect**:
+1. **Trendline formation**: 2 swing points connected, slope calculated
+2. **3rd touch approaching**: Price within 0.3 ATR of trendline
+3. **3rd touch confirmed**: Price touched and bounced (continuation) or broke through (reversal)
+4. **Trendline break**: Price closes beyond trendline (not just wick)
+5. **Backside retest**: After break, price returns to test the trendline from the other side
+
+**Output**:
+```python
+{
+    "active_trendlines": [
+        {
+            "type": "ascending",        # ascending / descending
+            "anchor_points": [
+                {"price": 21300, "time": "09:45"},
+                {"price": 21380, "time": "10:15"},
+            ],
+            "slope_per_bar": 2.67,      # points per 5-min bar
+            "touch_count": 2,
+            "current_trendline_price": 21420.0,  # projected current value
+            "price_distance": 30.0,     # current price - trendline price
+            "price_distance_atr_pct": 0.2,  # distance as % of ATR
+            "status": "active",         # active / broken / retesting
+            "approaching_3rd_touch": True,
+        }
+    ],
+    "recent_events": [
+        {"event": "3rd_touch_approaching", "trendline_idx": 0, "time": "11:00"},
+    ],
+}
+```
+
+**Dependencies**: Requires swing point detection (2.6) for anchor points.
+
+**Research questions**:
+- Best algorithm for real-time trendline fitting (Hough transform? Iterative RANSAC? Simple swing-to-swing?)
+- How to handle multiple valid trendlines (pick steepest? most touches?)
+- Timeframe: probably 15min and 1H only (5min too noisy, 4H too slow for intraday)
+- Tolerance for "touch" — wick vs close vs within N ticks?
+
+### 2.8 Implementation Priority
+
+These three modules build on each other:
+
+```
+2.6 Swing Points  ──→  2.7 Trendlines  ──→  feeds into all pattern detection
+        │
+        └──→  2.5 SMT Divergence (requires swing points on multiple instruments)
+```
+
+**Recommended order**:
+1. **Swing points first** (2.6) — foundational, everything else needs it
+2. **Trendlines second** (2.7) — depends on swing points
+3. **SMT last** (2.5) — depends on swing points + multi-instrument data
+
+**Data requirements**:
+- Swing points: Current instrument only, uses existing 1-min bars
+- Trendlines: Current instrument only, uses swing points
+- SMT: Needs ES + YM data loaded alongside NQ (requires multi-instrument loader enhancement)

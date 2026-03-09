@@ -34,6 +34,7 @@ class OpenPosition:
         trend_strength: str,
         session_date: str,
         pyramid_level: int = 0,
+        metadata: dict | None = None,
     ):
         self.direction = direction
         self.entry_price = entry_price
@@ -47,6 +48,7 @@ class OpenPosition:
         self.trend_strength = trend_strength
         self.session_date = session_date
         self.pyramid_level = pyramid_level
+        self.metadata = metadata or {}
         self.bars_held = 0
         self.trailing_stop = stop_price
         self.breakeven_activated = False

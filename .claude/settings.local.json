@@ -14,7 +14,11 @@
       "WebFetch(domain:forums.developer.nvidia.com)",
       "WebFetch(domain:www.digitalapplied.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Skill(merge-data)"
+      "Skill(merge-data)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:python.stockindicators.dev)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:www.marketcalls.in)"
     ]
   }
 }

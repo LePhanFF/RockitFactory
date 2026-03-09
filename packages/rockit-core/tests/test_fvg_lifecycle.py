@@ -1,4 +1,8 @@
-"""Tests for FVG detection with lifecycle tracking."""
+"""Tests for FVG detection with lifecycle tracking.
+
+Note: 5-min FVG detection is disabled (too noisy). Tests use 15-min timeframe.
+Test data uses freq='15min' so bars resample 1:1 into 15-min candles.
+"""
 
 import pandas as pd
 import pytest
@@ -6,7 +10,7 @@ import pytest
 from rockit_core.deterministic.modules.fvg_detection import get_fvg_detection
 
 
-def _make_bars(prices, start='2025-01-15 09:30', freq='5min'):
+def _make_bars(prices, start='2025-01-15 09:30', freq='15min'):
     """Create OHLC DataFrame from close prices (high = close+2, low = close-2)."""
     timestamps = pd.date_range(start, periods=len(prices), freq=freq)
     df = pd.DataFrame({
@@ -18,7 +22,7 @@ def _make_bars(prices, start='2025-01-15 09:30', freq='5min'):
     return df
 
 
-def _make_ohlc_bars(bars, start='2025-01-15 09:30', freq='5min'):
+def _make_ohlc_bars(bars, start='2025-01-15 09:30', freq='15min'):
     """Create OHLC DataFrame from explicit (o, h, l, c) tuples."""
     timestamps = pd.date_range(start, periods=len(bars), freq=freq)
     df = pd.DataFrame(bars, columns=['open', 'high', 'low', 'close'], index=timestamps)
@@ -35,7 +39,7 @@ class TestFVGDetection:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         bullish = [f for f in fvgs if f['type'] == 'bullish']
         assert len(bullish) >= 1
         assert bullish[0]['bottom'] == 105  # prev high
@@ -50,7 +54,7 @@ class TestFVGDetection:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         bearish = [f for f in fvgs if f['type'] == 'bearish']
         assert len(bearish) >= 1
         assert bearish[0]['top'] == 108     # prev low
@@ -69,7 +73,7 @@ class TestFVGLifecycle:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         bullish = [f for f in fvgs if f['type'] == 'bullish']
         assert len(bullish) >= 1
         assert bullish[0]['status'] == 'active'
@@ -87,7 +91,7 @@ class TestFVGLifecycle:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         bullish = [f for f in fvgs if f['type'] == 'bullish']
         assert len(bullish) >= 1
         filled = [f for f in bullish if f['status'] == 'filled']
@@ -106,7 +110,7 @@ class TestFVGLifecycle:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         bullish = [f for f in fvgs if f['type'] == 'bullish']
         assert len(bullish) >= 1
         # Should be partially filled
@@ -124,10 +128,10 @@ class TestFVGFields:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         assert len(fvgs) >= 1
         assert 'fvg_id' in fvgs[0]
-        assert fvgs[0]['fvg_id'].startswith('5min_')
+        assert fvgs[0]['fvg_id'].startswith('15min_')
 
     def test_fvg_has_created_time(self):
         bars = [
@@ -137,7 +141,7 @@ class TestFVGFields:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         assert fvgs[0]['created_time'] is not None
 
     def test_fvg_has_gap_size(self):
@@ -148,7 +152,7 @@ class TestFVGFields:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
+        fvgs = result['15min_fvg']
         bullish = [f for f in fvgs if f['type'] == 'bullish']
         assert bullish[0]['gap_size'] == pytest.approx(3.0)
 
@@ -160,8 +164,8 @@ class TestFVGFields:
         ]
         df = _make_ohlc_bars(bars)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        fvgs = result['5min_fvg']
-        assert fvgs[0]['timeframe'] == '5min'
+        fvgs = result['15min_fvg']
+        assert fvgs[0]['timeframe'] == '15min'
 
 
 class TestRecentlyFilled:
@@ -184,7 +188,7 @@ class TestRecentlyFilled:
         prices = [100, 101, 102, 103, 104]  # Smooth move, no gaps
         df = _make_bars(prices)
         result = get_fvg_detection(df, df, current_time_str="23:59")
-        assert result['5min_fvg'] == []
+        assert result['15min_fvg'] == []
 
 
 class TestOutputStructure:
@@ -195,7 +199,8 @@ class TestOutputStructure:
         expected_keys = [
             'daily_fvg', '4h_fvg', '1h_fvg', '90min_fvg', '15min_fvg', '5min_fvg',
             'daily_bpr', '4h_bpr', '1h_bpr', '90min_bpr', '15min_bpr', '5min_bpr',
-            '5min_engulfed', '15min_engulfed', 'recently_filled', 'note',
+            '5min_engulfed', '15min_engulfed', 'recently_filled',
+            'ndog', 'nwog', 'note',
         ]
         for key in expected_keys:
             assert key in result, f"Missing key: {key}"

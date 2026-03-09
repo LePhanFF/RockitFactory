@@ -29,6 +29,8 @@ from rockit_core.deterministic.modules.or_reversal import get_or_reversal_setup
 from rockit_core.deterministic.modules.edge_fade import get_edge_fade_setup
 # Tape reading context (V1 additions for LLM tape reader)
 from rockit_core.deterministic.modules.tape_context import get_tape_context
+# Regime classification context (daily ATR, VIX, prior day type, weekly context)
+from rockit_core.deterministic.modules.regime_context import get_regime_context
 # Market structure modules (loaded dynamically via registry)
 from rockit_core.deterministic.modules.market_structure_registry import (
     MARKET_MODULES, load_market_structure
@@ -37,6 +39,7 @@ from rockit_core.deterministic.modules.market_structure_registry import (
 # Orchestrator infrastructure
 from rockit_core.deterministic.modules.config_validator import validate_config, validate_snapshot_schema
 from rockit_core.deterministic.modules.schema_validator import validate_snapshot
+from rockit_core.deterministic.modules.data_validator import validate_snapshot_data
 from rockit_core.deterministic.modules.dataframe_cache import get_global_cache, clear_global_cache
 from rockit_core.deterministic.modules.error_logger import get_global_logger, log_error
 
@@ -293,6 +296,19 @@ def generate_snapshot(config):
             })
             snapshot["tape_context"] = {"error": str(e), "status": "failed"}
 
+        # Regime classification context (daily ATR, VIX, prior day, weekly, composite)
+        try:
+            regime_ctx = get_regime_context(
+                df_extended, df_current, intraday_data,
+                session_date, config['current_time']
+            )
+            snapshot["regime_context"] = regime_ctx
+        except Exception as e:
+            logger.log('get_regime_context', e, {
+                'session_date': session_date, 'current_time': config['current_time']
+            })
+            snapshot["regime_context"] = {"error": str(e), "status": "failed"}
+
         # Clean again after adding inference/CRI/playbook/strategy modules
         snapshot = clean_for_json(snapshot)
 
@@ -302,6 +318,18 @@ def generate_snapshot(config):
         except ValueError as e:
             logger.log('validate_snapshot', e, {'session_date': session_date})
             raise
+
+        # Domain-specific data validation (non-fatal: logs warnings)
+        try:
+            validation = validate_snapshot_data(snapshot)
+            snapshot["_validation"] = validation.to_dict()
+            if validation.errors:
+                for err in validation.errors:
+                    logger.log('data_validation', ValueError(err['message']), {
+                        'session_date': session_date, 'field': err['field']
+                    })
+        except Exception as e:
+            logger.log('validate_snapshot_data', e, {'session_date': session_date})
 
         # Save to output dir
         os.makedirs(config['output_dir'], exist_ok=True)

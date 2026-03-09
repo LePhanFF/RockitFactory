@@ -292,6 +292,16 @@ class BacktestEngine:
             else:
                 session_context['prior_session_bullish'] = None
 
+        # --- Phase 3a2: Store RTH bars + prior day context for TPO snapshot ---
+        self._current_rth_df = rth_df
+        self._prior_day_for_tpo = {
+            'poc': session_context.get('prior_va_poc'),
+            'vah': session_context.get('prior_va_vah'),
+            'val': session_context.get('prior_va_val'),
+            'high': session_context.get('pdh'),
+            'low': session_context.get('pdl'),
+        }
+
         # --- Phase 3b: Initialize day type confidence scorer ---
         confidence_scorer = DayTypeConfidenceScorer()
         atr = session_context.get('atr14', 0.0)
@@ -391,6 +401,19 @@ class BacktestEngine:
                 signal = strategy.on_bar(bar, bar_idx, session_context)
                 if signal is None:
                     continue
+
+                # Attach TPO snapshot at signal time
+                from rockit_core.engine.tpo_snapshot import generate_signal_tpo_snapshot
+                bar_time_str = bar_time.strftime('%H:%M') if bar_time else '10:30'
+                try:
+                    tpo_snap = generate_signal_tpo_snapshot(
+                        self._current_rth_df,
+                        bar_time_str,
+                        self._prior_day_for_tpo,
+                    )
+                    signal.metadata['tpo_at_entry'] = tpo_snap
+                except Exception:
+                    pass  # Don't let TPO failure block signal execution
 
                 result.signals_generated += 1
 
@@ -542,6 +565,7 @@ class BacktestEngine:
             mfe_price=pos.mfe_price,
             mae_bar=pos.mae_bar,
             mfe_bar=pos.mfe_bar,
+            metadata=pos.metadata,
         )
 
     def _execute_signal(
@@ -575,6 +599,7 @@ class BacktestEngine:
             trend_strength=signal.trend_strength,
             session_date=session_str,
             pyramid_level=signal.pyramid_level,
+            metadata=signal.metadata.copy(),
         )
 
         self.position_mgr.add_position(pos)

@@ -11,6 +11,7 @@ from rockit_core.deterministic.modules.tape_context import (
     _get_session_open_type,
     _get_va_entry_depth,
     _get_dpoc_retention,
+    _get_delta_context,
     _cluster_touches,
 )
 
@@ -395,6 +396,7 @@ class TestGetTapeContext:
         assert "session_open_type" in result
         assert "va_entry_depth" in result
         assert "dpoc_retention" in result
+        assert "delta_context" in result
 
     def test_early_session(self):
         """Works for early session (pre-IB) without errors."""
@@ -413,3 +415,88 @@ class TestGetTapeContext:
         assert result["ib_touch_counter"]["touch_count_ibh"] == 0
         assert result["c_period"]["classification"] in ("na", "developing")
         assert result["session_open_type"]["classification"] in ("too_early", "rotation", "acceptance", "judas", "both")
+
+
+# ── Delta Context ───────────────────────────────────────────
+
+def _make_delta_df(n_bars, start_time="09:30", base_price=21000,
+                   price_trend=0, delta_trend=0):
+    """Create DataFrame with vol_ask, vol_bid, vol_delta for delta tests."""
+    dates = pd.date_range(f"2026-03-04 {start_time}", periods=n_bars, freq="1min")
+    prices = [base_price + i * price_trend + np.random.uniform(-1, 1) for i in range(n_bars)]
+    vol_ask = [100 + int(i * delta_trend) for i in range(n_bars)]
+    vol_bid = [100 - int(i * delta_trend * 0.5) for i in range(n_bars)]
+    df = pd.DataFrame({
+        "open": [p - 1 for p in prices],
+        "high": [p + 2 for p in prices],
+        "low": [p - 2 for p in prices],
+        "close": prices,
+        "volume": [va + vb for va, vb in zip(vol_ask, vol_bid)],
+        "vol_ask": vol_ask,
+        "vol_bid": vol_bid,
+        "vol_delta": [va - vb for va, vb in zip(vol_ask, vol_bid)],
+    }, index=dates)
+    return df
+
+
+class TestDeltaContext:
+    def test_no_delta_columns(self):
+        """Returns unavailable when no delta data exists."""
+        bars = [(100, 105, 95, 102, 50)] * 30
+        df = _make_df(bars, start_time="09:30", freq="1min")
+        result = _get_delta_context(df)
+        assert result["cvd_trend"] == "unavailable"
+
+    def test_rising_cvd(self):
+        """Consistent buying → rising CVD."""
+        df = _make_delta_df(60, price_trend=0.5, delta_trend=2)
+        result = _get_delta_context(df)
+        assert result["cvd"] is not None
+        assert result["cvd"] > 0
+        assert result["cvd_trend"] in ("rising", "flat")
+
+    def test_confirmed_up(self):
+        """Price up + CVD up = confirmed."""
+        df = _make_delta_df(60, price_trend=1.0, delta_trend=3)
+        result = _get_delta_context(df)
+        assert result["divergence"] in ("confirmed_up", "neutral")
+
+    def test_bearish_divergence(self):
+        """Price up + CVD down = bearish divergence."""
+        dates = pd.date_range("2026-03-04 09:30", periods=60, freq="1min")
+        prices = [21000 + i * 0.5 for i in range(60)]  # price going up
+        # vol_ask decreasing, vol_bid increasing → negative delta
+        vol_ask = [50 - i for i in range(60)]
+        vol_bid = [100 + i for i in range(60)]
+        df = pd.DataFrame({
+            "open": [p - 1 for p in prices],
+            "high": [p + 2 for p in prices],
+            "low": [p - 2 for p in prices],
+            "close": prices,
+            "volume": [va + vb for va, vb in zip(vol_ask, vol_bid)],
+            "vol_ask": vol_ask,
+            "vol_bid": vol_bid,
+            "vol_delta": [va - vb for va, vb in zip(vol_ask, vol_bid)],
+        }, index=dates)
+        result = _get_delta_context(df)
+        assert result["cvd"] < 0  # CVD negative despite price going up
+        assert result["divergence"] in ("bearish_divergence", "neutral")
+
+    def test_delta_fields_present(self):
+        """All expected fields are present."""
+        df = _make_delta_df(30)
+        result = _get_delta_context(df)
+        assert "cvd" in result
+        assert "cvd_trend" in result
+        assert "current_bar_delta" in result
+        assert "delta_15bar_sum" in result
+        assert "delta_15bar_bias" in result
+        assert "session_volume" in result
+        assert "price_change" in result
+        assert "divergence" in result
+
+    def test_insufficient_data(self):
+        """Single bar returns insufficient."""
+        df = _make_delta_df(1)
+        result = _get_delta_context(df)
+        assert result["cvd_trend"] == "insufficient"

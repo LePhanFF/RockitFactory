@@ -16,7 +16,7 @@ def load_nq_csv(file_path, session_date):
     df.set_index('timestamp', inplace=True)
 
     current_date = pd.to_datetime(session_date).date()
-    start_date = (pd.to_datetime(session_date) - timedelta(days=14)).date()  # buffer for week/Asia
+    start_date = (pd.to_datetime(session_date) - timedelta(days=30)).date()  # 30 cal days ≈ 21 trading days for ATR14
     end_date = (pd.to_datetime(session_date) + timedelta(days=1)).date()     # include current full day
 
     # Extended df: all data in date range

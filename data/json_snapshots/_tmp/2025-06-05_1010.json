@@ -1,0 +1,1390 @@
+{
+    "session_date": "2025-06-05",
+    "current_et_time": "10:10",
+    "premarket": {
+        "asia_high": 22475.25,
+        "asia_low": 22431.5,
+        "london_high": 22551.25,
+        "london_low": 22445.25,
+        "london_range": 106.0,
+        "overnight_high": 22606.5,
+        "overnight_low": 22421.0,
+        "overnight_range": 185.5,
+        "previous_day_high": 22511.5,
+        "previous_day_low": 22349.5,
+        "previous_week_high": 22567.25,
+        "previous_week_low": 21780.0,
+        "compression_flag": false,
+        "compression_ratio": 0.571,
+        "smt_preopen": "neutral"
+    },
+    "intraday": {
+        "ib": {
+            "ib_status": "partial",
+            "ib_high": 22549.0,
+            "ib_low": 22400.0,
+            "ib_range": 149.0,
+            "ib_mid": 22474.5,
+            "price_vs_ib": "lower_third_hug",
+            "price_vs_vwap": "below",
+            "current_close": 22414.25,
+            "current_open": 22433.0,
+            "current_high": 22439.25,
+            "current_low": 22413.5,
+            "current_volume": 1552,
+            "current_vwap": 22479.98,
+            "ema20": 22443.94,
+            "ema50": 22463.03,
+            "ema200": 22482.28,
+            "rsi14": 39.55,
+            "atr14": 21.99,
+            "adx14": 16.98,
+            "bb_upper": 22564.84,
+            "bb_lower": 22401.99,
+            "bb_mid": 22483.41,
+            "bb_position": 0.0753,
+            "bb_width": 0.0072,
+            "ib_atr_ratio": 6.78,
+            "ib_width_class": "extreme",
+            "extension_pts": 0.0,
+            "extension_direction": "none",
+            "extension_multiple": 0.0,
+            "note": "IB location + technical indicators + ATR regime from CSV (no lookahead)"
+        },
+        "wick_parade": {
+            "bullish_wick_parade_count": 26,
+            "bearish_wick_parade_count": 26,
+            "window_minutes": 60,
+            "note": "Counts in last 60 min – ≥6 bullish = long override (Rule #14), ≥6 bearish = short override"
+        },
+        "dpoc_migration": {
+            "migration_status": "pre_1030",
+            "note": "No post-IB data yet"
+        },
+        "volume_profile": {
+            "current_session": {
+                "poc": 22449.25,
+                "vah": 22491.75,
+                "val": 22414.0,
+                "high": 22549.0,
+                "low": 22400.0,
+                "hvn_zones": [
+                    {
+                        "price": 22447.5,
+                        "range_from": 22445.0,
+                        "range_to": 22450.0,
+                        "volume": 5378,
+                        "pct_of_total": 7.4
+                    },
+                    {
+                        "price": 22452.5,
+                        "range_from": 22450.0,
+                        "range_to": 22455.0,
+                        "volume": 4996,
+                        "pct_of_total": 6.9
+                    },
+                    {
+                        "price": 22442.5,
+                        "range_from": 22440.0,
+                        "range_to": 22445.0,
+                        "volume": 4965,
+                        "pct_of_total": 6.8
+                    },
+                    {
+                        "price": 22437.5,
+                        "range_from": 22435.0,
+                        "range_to": 22440.0,
+                        "volume": 4625,
+                        "pct_of_total": 6.4
+                    },
+                    {
+                        "price": 22432.5,
+                        "range_from": 22430.0,
+                        "range_to": 22435.0,
+                        "volume": 3974,
+                        "pct_of_total": 5.5
+                    }
+                ],
+                "lvn_zones": [
+                    {
+                        "price": 22407.5,
+                        "range_from": 22405.0,
+                        "range_to": 22410.0,
+                        "volume": 836,
+                        "pct_of_total": 1.1
+                    },
+                    {
+                        "price": 22532.5,
+                        "range_from": 22530.0,
+                        "range_to": 22535.0,
+                        "volume": 856,
+                        "pct_of_total": 1.2
+                    },
+                    {
+                        "price": 22542.5,
+                        "range_from": 22540.0,
+                        "range_to": 22545.0,
+                        "volume": 856,
+                        "pct_of_total": 1.2
+                    },
+                    {
+                        "price": 22537.5,
+                        "range_from": 22535.0,
+                        "range_to": 22540.0,
+                        "volume": 856,
+                        "pct_of_total": 1.2
+                    },
+                    {
+                        "price": 22527.5,
+                        "range_from": 22525.0,
+                        "range_to": 22530.0,
+                        "volume": 954,
+                        "pct_of_total": 1.3
+                    }
+                ]
+            },
+            "previous_day": {
+                "poc": 22459.75,
+                "vah": 22577.0,
+                "val": 22387.5,
+                "high": 22643.5,
+                "low": 22212.0,
+                "hvn_zones": [
+                    {
+                        "price": 22482.5,
+                        "range_from": 22480.0,
+                        "range_to": 22485.0,
+                        "volume": 16651,
+                        "pct_of_total": 2.8
+                    },
+                    {
+                        "price": 22457.5,
+                        "range_from": 22455.0,
+                        "range_to": 22460.0,
+                        "volume": 16583,
+                        "pct_of_total": 2.8
+                    },
+                    {
+                        "price": 22442.5,
+                        "range_from": 22440.0,
+                        "range_to": 22445.0,
+                        "volume": 15707,
+                        "pct_of_total": 2.7
+                    },
+                    {
+                        "price": 22477.5,
+                        "range_from": 22475.0,
+                        "range_to": 22480.0,
+                        "volume": 15403,
+                        "pct_of_total": 2.6
+                    },
+                    {
+                        "price": 22452.5,
+                        "range_from": 22450.0,
+                        "range_to": 22455.0,
+                        "volume": 15320,
+                        "pct_of_total": 2.6
+                    }
+                ],
+                "lvn_zones": [
+                    {
+                        "price": 22217.5,
+                        "range_from": 22215.0,
+                        "range_to": 22220.0,
+                        "volume": 814,
+                        "pct_of_total": 0.1
+                    },
+                    {
+                        "price": 22637.5,
+                        "range_from": 22635.0,
+                        "range_to": 22640.0,
+                        "volume": 863,
+                        "pct_of_total": 0.1
+                    },
+                    {
+                        "price": 22267.5,
+                        "range_from": 22265.0,
+                        "range_to": 22270.0,
+                        "volume": 1598,
+                        "pct_of_total": 0.3
+                    },
+                    {
+                        "price": 22222.5,
+                        "range_from": 22220.0,
+                        "range_to": 22225.0,
+                        "volume": 1664,
+                        "pct_of_total": 0.3
+                    },
+                    {
+                        "price": 22607.5,
+                        "range_from": 22605.0,
+                        "range_to": 22610.0,
+                        "volume": 1809,
+                        "pct_of_total": 0.3
+                    }
+                ]
+            },
+            "previous_3_days": {
+                "poc": 22446.75,
+                "vah": 22538.25,
+                "val": 22361.5,
+                "high": 22643.5,
+                "low": 22107.75,
+                "hvn_zones": [
+                    {
+                        "price": 22447.5,
+                        "range_from": 22445.0,
+                        "range_to": 22450.0,
+                        "volume": 46696,
+                        "pct_of_total": 3.3
+                    },
+                    {
+                        "price": 22412.5,
+                        "range_from": 22410.0,
+                        "range_to": 22415.0,
+                        "volume": 44909,
+                        "pct_of_total": 3.1
+                    },
+                    {
+                        "price": 22442.5,
+                        "range_from": 22440.0,
+                        "range_to": 22445.0,
+                        "volume": 43805,
+                        "pct_of_total": 3.1
+                    },
+                    {
+                        "price": 22457.5,
+                        "range_from": 22455.0,
+                        "range_to": 22460.0,
+                        "volume": 43537,
+                        "pct_of_total": 3.0
+                    },
+                    {
+                        "price": 22452.5,
+                        "range_from": 22450.0,
+                        "range_to": 22455.0,
+                        "volume": 42992,
+                        "pct_of_total": 3.0
+                    }
+                ],
+                "lvn_zones": [
+                    {
+                        "price": 22112.5,
+                        "range_from": 22110.0,
+                        "range_to": 22115.0,
+                        "volume": 268,
+                        "pct_of_total": 0.0
+                    },
+                    {
+                        "price": 22637.5,
+                        "range_from": 22635.0,
+                        "range_to": 22640.0,
+                        "volume": 863,
+                        "pct_of_total": 0.1
+                    },
+                    {
+                        "price": 22132.5,
+                        "range_from": 22130.0,
+                        "range_to": 22135.0,
+                        "volume": 914,
+                        "pct_of_total": 0.1
+                    },
+                    {
+                        "price": 22117.5,
+                        "range_from": 22115.0,
+                        "range_to": 22120.0,
+                        "volume": 1151,
+                        "pct_of_total": 0.1
+                    },
+                    {
+                        "price": 22137.5,
+                        "range_from": 22135.0,
+                        "range_to": 22140.0,
+                        "volume": 1345,
+                        "pct_of_total": 0.1
+                    }
+                ]
+            },
+            "previous_5_days": {
+                "poc": 22446.75,
+                "vah": 22580.0,
+                "val": 22086.0,
+                "high": 22643.5,
+                "low": 21780.0,
+                "hvn_zones": [
+                    {
+                        "price": 22447.5,
+                        "range_from": 22445.0,
+                        "range_to": 22450.0,
+                        "volume": 46696,
+                        "pct_of_total": 1.9
+                    },
+                    {
+                        "price": 22412.5,
+                        "range_from": 22410.0,
+                        "range_to": 22415.0,
+                        "volume": 44909,
+                        "pct_of_total": 1.9
+                    },
+                    {
+                        "price": 22442.5,
+                        "range_from": 22440.0,
+                        "range_to": 22445.0,
+                        "volume": 43805,
+                        "pct_of_total": 1.8
+                    },
+                    {
+                        "price": 22457.5,
+                        "range_from": 22455.0,
+                        "range_to": 22460.0,
+                        "volume": 43537,
+                        "pct_of_total": 1.8
+                    },
+                    {
+                        "price": 22452.5,
+                        "range_from": 22450.0,
+                        "range_to": 22455.0,
+                        "volume": 42992,
+                        "pct_of_total": 1.8
+                    }
+                ],
+                "lvn_zones": [
+                    {
+                        "price": 22637.5,
+                        "range_from": 22635.0,
+                        "range_to": 22640.0,
+                        "volume": 863,
+                        "pct_of_total": 0.0
+                    },
+                    {
+                        "price": 21787.5,
+                        "range_from": 21785.0,
+                        "range_to": 21790.0,
+                        "volume": 1065,
+                        "pct_of_total": 0.0
+                    },
+                    {
+                        "price": 22607.5,
+                        "range_from": 22605.0,
+                        "range_to": 22610.0,
+                        "volume": 1809,
+                        "pct_of_total": 0.1
+                    },
+                    {
+                        "price": 22602.5,
+                        "range_from": 22600.0,
+                        "range_to": 22605.0,
+                        "volume": 1812,
+                        "pct_of_total": 0.1
+                    },
+                    {
+                        "price": 21792.5,
+                        "range_from": 21790.0,
+                        "range_to": 21795.0,
+                        "volume": 1860,
+                        "pct_of_total": 0.1
+                    }
+                ]
+            },
+            "previous_10_days": {
+                "poc": 22158.5,
+                "vah": 22432.0,
+                "val": 21853.25,
+                "high": 22643.5,
+                "low": 21435.5,
+                "hvn_zones": [
+                    {
+                        "price": 22157.5,
+                        "range_from": 22155.0,
+                        "range_to": 22160.0,
+                        "volume": 72555,
+                        "pct_of_total": 1.6
+                    },
+                    {
+                        "price": 22162.5,
+                        "range_from": 22160.0,
+                        "range_to": 22165.0,
+                        "volume": 70228,
+                        "pct_of_total": 1.6
+                    },
+                    {
+                        "price": 22082.5,
+                        "range_from": 22080.0,
+                        "range_to": 22085.0,
+                        "volume": 69783,
+                        "pct_of_total": 1.6
+                    },
+                    {
+                        "price": 22172.5,
+                        "range_from": 22170.0,
+                        "range_to": 22175.0,
+                        "volume": 66411,
+                        "pct_of_total": 1.5
+                    },
+                    {
+                        "price": 22087.5,
+                        "range_from": 22085.0,
+                        "range_to": 22090.0,
+                        "volume": 65346,
+                        "pct_of_total": 1.5
+                    }
+                ],
+                "lvn_zones": [
+                    {
+                        "price": 21442.5,
+                        "range_from": 21440.0,
+                        "range_to": 21445.0,
+                        "volume": 225,
+                        "pct_of_total": 0.0
+                    },
+                    {
+                        "price": 21447.5,
+                        "range_from": 21445.0,
+                        "range_to": 21450.0,
+                        "volume": 225,
+                        "pct_of_total": 0.0
+                    },
+                    {
+                        "price": 21452.5,
+                        "range_from": 21450.0,
+                        "range_to": 21455.0,
+                        "volume": 498,
+                        "pct_of_total": 0.0
+                    },
+                    {
+                        "price": 22637.5,
+                        "range_from": 22635.0,
+                        "range_to": 22640.0,
+                        "volume": 863,
+                        "pct_of_total": 0.0
+                    },
+                    {
+                        "price": 21457.5,
+                        "range_from": 21455.0,
+                        "range_to": 21460.0,
+                        "volume": 872,
+                        "pct_of_total": 0.0
+                    }
+                ]
+            },
+            "note": "VRVP-style volume profile (70% VA). HVN = acceptance zones (volume > 1.5× mean bucket). LVN = rejection seams (volume < 0.5× mean bucket, interior only). 5-day composite = visible range for structural HVN/LVN."
+        },
+        "tpo_profile": {
+            "current_poc": 22449.25,
+            "current_vah": 22505.75,
+            "current_val": 22420.25,
+            "single_prints_above_vah": 13,
+            "single_prints_below_val": 18,
+            "poor_high": 0,
+            "poor_low": 0,
+            "effective_poor_high": 1,
+            "effective_poor_low": 1,
+            "rejection_at_high": "strong",
+            "rejection_at_low": "strong",
+            "fattening_zone": "below_val",
+            "tpo_shape": "b_shape",
+            "naked_levels": {
+                "prior_poc": "tested",
+                "prior_vah": "naked_above",
+                "prior_val": "naked_below",
+                "prior_high": "naked_above",
+                "prior_low": "naked_below"
+            },
+            "excess_high": 1,
+            "excess_low": 1,
+            "excess_high_ticks": 13,
+            "excess_low_ticks": 18,
+            "tpo_at_high": 1,
+            "tpo_at_low": 1,
+            "single_print_ranges": [
+                {
+                    "from": 22400.0,
+                    "to": 22404.25,
+                    "location": "below_val",
+                    "ticks": 18
+                },
+                {
+                    "from": 22546.0,
+                    "to": 22549.0,
+                    "location": "above_vah",
+                    "ticks": 13
+                }
+            ],
+            "hvn_nodes": [
+                {
+                    "price": 22447.5,
+                    "tpo_count": 335,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22442.5,
+                    "tpo_count": 309,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22452.5,
+                    "tpo_count": 295,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22437.5,
+                    "tpo_count": 283,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22432.5,
+                    "tpo_count": 228,
+                    "bucket_size": 5.0
+                }
+            ],
+            "lvn_nodes": [
+                {
+                    "price": 22407.5,
+                    "tpo_count": 40,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22532.5,
+                    "tpo_count": 40,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22542.5,
+                    "tpo_count": 40,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22537.5,
+                    "tpo_count": 40,
+                    "bucket_size": 5.0
+                },
+                {
+                    "price": 22527.5,
+                    "tpo_count": 45,
+                    "bucket_size": 5.0
+                }
+            ],
+            "period_ranges": [
+                {
+                    "letter": "A",
+                    "time": "09:30",
+                    "high": 22549.0,
+                    "low": 22400.0,
+                    "width": 149.0
+                },
+                {
+                    "letter": "B",
+                    "time": "10:00",
+                    "high": 22471.25,
+                    "low": 22413.5,
+                    "width": 57.75
+                }
+            ],
+            "otf_sequence": [
+                {
+                    "letter": "A",
+                    "otf": "initial"
+                },
+                {
+                    "letter": "B",
+                    "otf": "inside"
+                }
+            ],
+            "otf_bias": "rotation",
+            "width_trend": "insufficient",
+            "distributions": {
+                "count": 1,
+                "type": "single"
+            },
+            "note": "b-shape (selling tail, distribution at bottom). Excess both extremes (high: 13 ticks, low: 18 ticks). Rotational (no clear OTF)."
+        },
+        "ninety_min_pd_arrays": {
+            "ninety_min_high": 22549.0,
+            "ninety_min_low": 22400.0,
+            "ninety_min_range": 149.0,
+            "equilibrium_50": 22474.5,
+            "current_in_discount": 1,
+            "current_in_premium": 0,
+            "expansion_status": "inside",
+            "bias_potential": "bullish",
+            "note": "90-min PD arrays: discount = bullish zone, premium = bearish. Expansion = trend confirmation"
+        },
+        "fvg_detection": {
+            "daily_fvg": [],
+            "4h_fvg": [],
+            "1h_fvg": [
+                {
+                    "fvg_id": "1h_1",
+                    "type": "bearish",
+                    "top": 22453.75,
+                    "bottom": 22452.75,
+                    "gap_size": 1.0,
+                    "created_time": "2025-06-05 02:00",
+                    "time": "2025-06-05 02:00",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 03:00",
+                    "timeframe": "1h"
+                },
+                {
+                    "fvg_id": "1h_2",
+                    "type": "bullish",
+                    "top": 22482.0,
+                    "bottom": 22452.75,
+                    "gap_size": 29.25,
+                    "created_time": "2025-06-05 04:00",
+                    "time": "2025-06-05 04:00",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 08:00",
+                    "timeframe": "1h"
+                }
+            ],
+            "90min_fvg": [
+                {
+                    "fvg_id": "90min_1",
+                    "type": "bullish",
+                    "top": 22472.5,
+                    "bottom": 22452.75,
+                    "gap_size": 19.75,
+                    "created_time": "2025-06-05 04:30",
+                    "time": "2025-06-05 04:30",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 07:30",
+                    "timeframe": "90min"
+                }
+            ],
+            "15min_fvg": [
+                {
+                    "fvg_id": "15min_1",
+                    "type": "bearish",
+                    "top": 22455.5,
+                    "bottom": 22444.75,
+                    "gap_size": 10.75,
+                    "created_time": "2025-06-05 01:15",
+                    "time": "2025-06-05 01:15",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 03:00",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_2",
+                    "type": "bullish",
+                    "top": 22465.5,
+                    "bottom": 22450.5,
+                    "gap_size": 15.0,
+                    "created_time": "2025-06-05 03:15",
+                    "time": "2025-06-05 03:15",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 08:30",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_3",
+                    "type": "bullish",
+                    "top": 22508.5,
+                    "bottom": 22472.5,
+                    "gap_size": 36.0,
+                    "created_time": "2025-06-05 03:30",
+                    "time": "2025-06-05 03:30",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 05:15",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_4",
+                    "type": "bearish",
+                    "top": 22529.75,
+                    "bottom": 22500.5,
+                    "gap_size": 29.25,
+                    "created_time": "2025-06-05 05:00",
+                    "time": "2025-06-05 05:00",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 08:45",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_5",
+                    "type": "bullish",
+                    "top": 22499.75,
+                    "bottom": 22498.25,
+                    "gap_size": 1.5,
+                    "created_time": "2025-06-05 06:15",
+                    "time": "2025-06-05 06:15",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 06:30",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_6",
+                    "type": "bearish",
+                    "top": 22499.75,
+                    "bottom": 22488.0,
+                    "gap_size": 11.75,
+                    "created_time": "2025-06-05 06:45",
+                    "time": "2025-06-05 06:45",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 08:45",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_7",
+                    "type": "bullish",
+                    "top": 22488.5,
+                    "bottom": 22486.25,
+                    "gap_size": 2.25,
+                    "created_time": "2025-06-05 09:00",
+                    "time": "2025-06-05 09:00",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 09:30",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_8",
+                    "type": "bearish",
+                    "top": 22499.0,
+                    "bottom": 22496.75,
+                    "gap_size": 2.25,
+                    "created_time": "2025-06-05 09:45",
+                    "time": "2025-06-05 09:45",
+                    "status": "active",
+                    "fill_pct": 0.0,
+                    "filled_time": null,
+                    "timeframe": "15min"
+                }
+            ],
+            "5min_fvg": [],
+            "recently_filled": [
+                {
+                    "fvg_id": "1h_1",
+                    "type": "bearish",
+                    "top": 22453.75,
+                    "bottom": 22452.75,
+                    "gap_size": 1.0,
+                    "created_time": "2025-06-05 02:00",
+                    "time": "2025-06-05 02:00",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 03:00",
+                    "timeframe": "1h"
+                },
+                {
+                    "fvg_id": "1h_2",
+                    "type": "bullish",
+                    "top": 22482.0,
+                    "bottom": 22452.75,
+                    "gap_size": 29.25,
+                    "created_time": "2025-06-05 04:00",
+                    "time": "2025-06-05 04:00",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 08:00",
+                    "timeframe": "1h"
+                },
+                {
+                    "fvg_id": "15min_5",
+                    "type": "bullish",
+                    "top": 22499.75,
+                    "bottom": 22498.25,
+                    "gap_size": 1.5,
+                    "created_time": "2025-06-05 06:15",
+                    "time": "2025-06-05 06:15",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 06:30",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_6",
+                    "type": "bearish",
+                    "top": 22499.75,
+                    "bottom": 22488.0,
+                    "gap_size": 11.75,
+                    "created_time": "2025-06-05 06:45",
+                    "time": "2025-06-05 06:45",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 08:45",
+                    "timeframe": "15min"
+                },
+                {
+                    "fvg_id": "15min_7",
+                    "type": "bullish",
+                    "top": 22488.5,
+                    "bottom": 22486.25,
+                    "gap_size": 2.25,
+                    "created_time": "2025-06-05 09:00",
+                    "time": "2025-06-05 09:00",
+                    "status": "filled",
+                    "fill_pct": 1.0,
+                    "filled_time": "2025-06-05 09:30",
+                    "timeframe": "15min"
+                }
+            ],
+            "daily_bpr": [],
+            "4h_bpr": [],
+            "1h_bpr": [],
+            "90min_bpr": [],
+            "15min_bpr": [],
+            "5min_bpr": [],
+            "5min_engulfed": [],
+            "15min_engulfed": [],
+            "ndog": {
+                "gap_type": "NDOG",
+                "direction": "gap_up",
+                "prior_close": 22466.25,
+                "current_open": 22522.0,
+                "ndog_high": 22522.0,
+                "ndog_low": 22466.25,
+                "gap_size": 55.75,
+                "status": "filled",
+                "fill_pct": 1.0,
+                "filled_time": "09:40"
+            },
+            "nwog": {
+                "gap_type": "NWOG",
+                "direction": "gap_down",
+                "friday_close": 22077.75,
+                "monday_open": 21988.75,
+                "nwog_high": 22077.75,
+                "nwog_low": 21988.75,
+                "gap_size": 89.0,
+                "status": "filled",
+                "fill_pct": 1.0,
+                "filled_time": "09:30",
+                "friday_session": "2025-05-30"
+            },
+            "note": "FVGs detected with lifecycle tracking (5min disabled — too noisy). status: active (unfilled), partially_filled (price entered gap), filled (fully mitigated). Filled FVGs retained with fill_pct and filled_time. BPR = opposing engulfing inversion on active FVGs. Engulfed = current FVG fully covers past opposite-type FVG. NDOG = New Day Opening Gap (prior close → current open). NWOG = New Week Opening Gap (Friday close → Sunday/Monday open)."
+        },
+        "smt_detection": {
+            "smt_at_session_high": "confirmed",
+            "smt_at_session_low": "bullish_divergence",
+            "smt_at_ib_high": "no_test",
+            "smt_at_ib_low": "no_test",
+            "smt_at_prior_vah": "no_test",
+            "smt_at_prior_val": "no_test",
+            "smt_at_overnight_high": "no_test",
+            "smt_at_overnight_low": "bullish_divergence",
+            "active_divergences": [
+                "bullish_at_session_low",
+                "bullish_at_overnight_low"
+            ],
+            "note": "SMT detection: 2 divergence(s) — bullish_at_session_low, bullish_at_overnight_low"
+        }
+    },
+    "market_structure": {
+        "or_analysis": {
+            "or_high": 22549.0,
+            "or_low": 22490.25,
+            "or_mid": 22519.625,
+            "eor_high": 22549.0,
+            "eor_low": 22470.0,
+            "eor_range": 79.0,
+            "opening_drive": "ROTATION",
+            "swept_high": false,
+            "swept_low": false,
+            "sweep_direction": "none",
+            "sweep_depth_pct": 0.0,
+            "closest_level": null,
+            "accepted_levels": [
+                {
+                    "level_name": "PDH",
+                    "level_price": 22511.5,
+                    "direction": "bearish",
+                    "confirmed_at_bar": 3,
+                    "confirmed_time": "09:33"
+                },
+                {
+                    "level_name": "ASIA_HIGH",
+                    "level_price": 22475.25,
+                    "direction": "bearish",
+                    "confirmed_at_bar": 17,
+                    "confirmed_time": "09:47"
+                },
+                {
+                    "level_name": "ASIA_LOW",
+                    "level_price": 22431.5,
+                    "direction": "bearish",
+                    "confirmed_at_bar": 19,
+                    "confirmed_time": "09:49"
+                },
+                {
+                    "level_name": "LDN_LOW",
+                    "level_price": 22445.25,
+                    "direction": "bearish",
+                    "confirmed_at_bar": 17,
+                    "confirmed_time": "09:47"
+                }
+            ],
+            "acceptance_count": 4,
+            "or_behavior": "acceptance",
+            "note": "OR analysis: drive=ROTATION, behavior=acceptance, swept_high=False, swept_low=False, accepted=['PDH', 'ASIA_HIGH', 'ASIA_LOW', 'LDN_LOW']"
+        },
+        "prior_va_analysis": {
+            "previous_session_vah": 22499.0,
+            "previous_session_val": 22429.25,
+            "previous_session_poc": 22481.0,
+            "va_width": 69.75,
+            "current_open": 22459.0,
+            "current_high": 22606.5,
+            "current_low": 22400.0,
+            "current_close": 22414.25,
+            "gap_status": "inside_va",
+            "gap_direction": "none",
+            "gap_size_pts": 0.0,
+            "model_a_triggered": false,
+            "model_b_triggered": false,
+            "model_c_triggered": false,
+            "active_model": null,
+            "80p_setup_ready": false,
+            "80p_setup_type": "none",
+            "80p_confidence": 0,
+            "or_context": {
+                "or_playbook_viable": true,
+                "reason": "Opened inside previous VA — normal IB, OR candidate"
+            },
+            "tpo_va_alignment": "extending_beyond",
+            "status": "complete",
+            "note": "Prior VA analysis: gap=inside_va, 80p_ready=False, model=none"
+        },
+        "ib_extension": {
+            "20p_triggered": false,
+            "20p_direction": "none",
+            "ib_complete": false,
+            "status": "ib_not_complete",
+            "note": "IB completes at 10:30 — 20P check begins post-IB"
+        },
+        "balance_type": {
+            "balance_type": "neutral",
+            "upper_probe_result": "none",
+            "lower_probe_result": "none",
+            "upper_probe_confidence": 0.0,
+            "lower_probe_confidence": 0.0,
+            "probe_order": "none",
+            "dominant_bias": "none",
+            "playbook_action": "WAIT_DUAL_SIDED",
+            "confidence": 0.0,
+            "skew": "neutral",
+            "skew_strength": 0.0,
+            "skew_factors": {
+                "vol_poc_vs_ib_mid": "at",
+                "tpo_poc_vs_ib_mid": "at",
+                "dpoc_direction": "flat",
+                "fattening_zone": "inside_va",
+                "close_position": "middle"
+            },
+            "seam_level": 0.0,
+            "seam_description": "No data",
+            "morph": {
+                "status": "none",
+                "morph_type": "none",
+                "morph_time_window": "am",
+                "morph_signals": [],
+                "morph_confidence": 0.0
+            },
+            "note": "Insufficient data"
+        },
+        "range_classification": {
+            "ib_range_classification": "TIGHT (<200pts)",
+            "ib_range_pts": 149.0,
+            "high_rejection": {
+                "tested": false,
+                "rejection_confidence": 0.0,
+                "pullback_type": "none",
+                "bars_tested": 0,
+                "bars_to_pullback": 999,
+                "pullback_magnitude_pts": 0.0,
+                "note": "No test data"
+            },
+            "low_rejection": {
+                "tested": false,
+                "rejection_confidence": 0.0,
+                "pullback_type": "none",
+                "bars_tested": 0,
+                "bars_to_pullback": 999,
+                "pullback_magnitude_pts": 0.0,
+                "note": "No test data"
+            },
+            "combined_confidence": 0.0,
+            "recommended_action": "FRAMEWORK",
+            "note": "Range analysis: TIGHT (<200pts) (149pts). High rejection 0.00, Low rejection 0.00. Action: FRAMEWORK"
+        },
+        "edge_zone": {
+            "bearish_extended": true,
+            "note": "Extreme bearish extension (breakdown scenario, skip)"
+        },
+        "va_poke": {
+            "vah_poke_count": 3,
+            "val_poke_count": 7,
+            "poke_number": 7,
+            "poke_status": "long_val_fade",
+            "rejection_active": true,
+            "confirmation_method": "2x5min",
+            "five_min_consec_inside": 2,
+            "short_bias_bonus": false,
+            "note": "VA poke: VAH=3, VAL=7, status=long_val_fade, rejection=True"
+        }
+    },
+    "core_confluences": {
+        "ib_acceptance": {
+            "close_above_ibh": false,
+            "close_below_ibl": false,
+            "price_accepted_higher": "No",
+            "price_accepted_lower": "No"
+        },
+        "dpoc_vs_ib": {
+            "dpoc_above_ibh": false,
+            "dpoc_below_ibl": false,
+            "dpoc_extreme_shift": "none"
+        },
+        "dpoc_compression": {
+            "compressing_against_vah": false,
+            "compressing_against_val": false,
+            "compression_bias": "none"
+        },
+        "price_location": {
+            "in_upper_third": false,
+            "in_lower_third": true,
+            "in_middle": false,
+            "location_label": "lower_third_hug"
+        },
+        "tpo_signals": {
+            "single_prints_above": true,
+            "single_prints_below": true,
+            "fattening_upper": false,
+            "fattening_lower": true
+        },
+        "migration": {
+            "significant_up": false,
+            "significant_down": false,
+            "net_direction": "flat",
+            "pts_since_1030": 0
+        },
+        "note": "Precomputed confluences – use these for bias logic, quote raw values from intraday"
+    },
+    "inference": {
+        "day_type": {
+            "type": "Neutral Range",
+            "timestamp": "2025-06-05 / 10:10"
+        },
+        "day_type_morph": "NA",
+        "trend_strength": "Weak",
+        "bias": "Flat",
+        "value_acceptance": "POC 22449.25 inside VA",
+        "tpo_read": {
+            "profile_signals": "Lower fattening | Single prints high | Single prints low",
+            "dpoc_migration": "DPOC migration flat 0.0 pts",
+            "extreme_or_compression": "none"
+        },
+        "confidence": 50,
+        "day_type_reasoning": [
+            "Trend strength: Weak",
+            "Weak trend strength cap applied: Bias downgraded, confidence capped at 75%"
+        ],
+        "one_liner": "Flat (weak trend, 50% confidence)"
+    },
+    "cri_readiness": {
+        "overall_status": "STAND_DOWN",
+        "posture": {
+            "state": "Stabilized",
+            "score": 3.5,
+            "signal": "Posture: Normal conditions"
+        },
+        "terrain": {
+            "classification": "A2",
+            "score": 2.0,
+            "key_signals": [
+                "Volatility: Low",
+                "Reclaim: Failed",
+                "Breath: Shallow",
+                "TRAP DETECTED: Bear Trap"
+            ],
+            "trap": {
+                "detected": true,
+                "type": "Bear Trap",
+                "bullish_wick_count": 26,
+                "bearish_wick_count": 26,
+                "score": 1.0,
+                "note": "Trap: Bear Trap (bullish wicks: 26, bearish wicks: 26)"
+            },
+            "component_scores": {
+                "volatility": 4.0,
+                "reclaim": 1.5,
+                "breath": 2.0,
+                "trap": 1.0
+            }
+        },
+        "identity": {
+            "permitted": "Squire",
+            "match": "Partial",
+            "trend_strength": "Weak",
+            "terrain_class": "A2",
+            "note": "Identity: Squire (Partial) - Terrain A2, Trend Weak"
+        },
+        "permission": {
+            "size_cap": "Flat",
+            "aggression": "No entry",
+            "note": "Permission: Flat size, No entry"
+        },
+        "reclaim": {
+            "state": "Failed",
+            "score": 1.5,
+            "clean_count": 0,
+            "hesitant_count": 1,
+            "failed_count": 2,
+            "key_summary": "Failed reclaim (0 clean, 1 hesitant, 2 failed)",
+            "reclaim_data": [
+                {
+                    "level": "IBH",
+                    "status": "failed_reclaim",
+                    "score": 1.0
+                },
+                {
+                    "level": "IBL",
+                    "status": "hesitant_reclaim",
+                    "score": 3.0
+                },
+                {
+                    "level": "VAH",
+                    "status": "failed_reclaim",
+                    "score": 1.0
+                },
+                {
+                    "level": "VAL",
+                    "status": "testing",
+                    "score": 2.0
+                }
+            ]
+        },
+        "volatility": {
+            "state": "Low",
+            "atr14": 21.99,
+            "ib_range": 149.0,
+            "atr_to_ib_ratio": 0.15,
+            "note": "Volatility Low: ATR/IB ratio 0.15"
+        },
+        "breath": {
+            "state": "Shallow",
+            "direction": "flat",
+            "velocity": 0,
+            "dpoc_regime": "",
+            "score": 2.0,
+            "note": "Breath Shallow: DPOC flat at 0.0 pts/30min"
+        },
+        "trap": {
+            "detected": true,
+            "type": "Bear Trap",
+            "bullish_wick_count": 26,
+            "bearish_wick_count": 26,
+            "score": 1.0,
+            "note": "Trap: Bear Trap (bullish wicks: 26, bearish wicks: 26)"
+        },
+        "danger_flags": [
+            "TRAP: Bear Trap"
+        ],
+        "readiness_summary": "STAND_DOWN - A2 terrain, Stabilized posture, reclaim Failed"
+    },
+    "playbook_setup": {
+        "matched_playbook": "Standby",
+        "bullish_setup": null,
+        "bearish_setup": null,
+        "rationale": [
+            "No clear playbook match: Permission denied (CRI: No entry)",
+            "Action: Observe market structure, wait for confirmation"
+        ],
+        "permission": {
+            "aggression": "Observe only",
+            "size_cap": "Flat",
+            "note": "Stand down - no valid setup"
+        }
+    },
+    "balance_classification": {
+        "balance_type": "neutral",
+        "upper_probe_result": "none",
+        "lower_probe_result": "none",
+        "upper_probe_confidence": 0.0,
+        "lower_probe_confidence": 0.0,
+        "probe_order": "none",
+        "dominant_bias": "none",
+        "playbook_action": "WAIT_DUAL_SIDED",
+        "confidence": 0.0,
+        "skew": "neutral",
+        "skew_strength": 0.0,
+        "skew_factors": {
+            "vol_poc_vs_ib_mid": "at",
+            "tpo_poc_vs_ib_mid": "at",
+            "dpoc_direction": "flat",
+            "fattening_zone": "inside_va",
+            "close_position": "middle"
+        },
+        "seam_level": 0.0,
+        "seam_description": "No data",
+        "morph": {
+            "status": "none",
+            "morph_type": "none",
+            "morph_time_window": "am",
+            "morph_signals": [],
+            "morph_confidence": 0.0
+        },
+        "note": "Insufficient data"
+    },
+    "mean_reversion": {
+        "ib_range_classification": "TIGHT (<200pts)",
+        "ib_range_pts": 149.0,
+        "high_rejection": {
+            "tested": false,
+            "rejection_confidence": 0.0,
+            "pullback_type": "none",
+            "bars_tested": 0,
+            "bars_to_pullback": 999,
+            "pullback_magnitude_pts": 0.0,
+            "note": "No test data"
+        },
+        "low_rejection": {
+            "tested": false,
+            "rejection_confidence": 0.0,
+            "pullback_type": "none",
+            "bars_tested": 0,
+            "bars_to_pullback": 999,
+            "pullback_magnitude_pts": 0.0,
+            "note": "No test data"
+        },
+        "combined_confidence": 0.0,
+        "recommended_action": "FRAMEWORK",
+        "note": "Range analysis: TIGHT (<200pts) (149pts). High rejection 0.00, Low rejection 0.00. Action: FRAMEWORK"
+    },
+    "or_reversal": {
+        "or_high": 22549.0,
+        "or_low": 22490.25,
+        "or_mid": 22519.625,
+        "eor_high": 22549.0,
+        "eor_low": 22470.0,
+        "eor_range": 79.0,
+        "opening_drive": "ROTATION",
+        "swept_high": false,
+        "swept_low": false,
+        "sweep_direction": "none",
+        "sweep_depth_pct": 0.0,
+        "closest_level": null,
+        "accepted_levels": [
+            {
+                "level_name": "PDH",
+                "level_price": 22511.5,
+                "direction": "bearish",
+                "confirmed_at_bar": 3,
+                "confirmed_time": "09:33"
+            },
+            {
+                "level_name": "ASIA_HIGH",
+                "level_price": 22475.25,
+                "direction": "bearish",
+                "confirmed_at_bar": 17,
+                "confirmed_time": "09:47"
+            },
+            {
+                "level_name": "ASIA_LOW",
+                "level_price": 22431.5,
+                "direction": "bearish",
+                "confirmed_at_bar": 19,
+                "confirmed_time": "09:49"
+            },
+            {
+                "level_name": "LDN_LOW",
+                "level_price": 22445.25,
+                "direction": "bearish",
+                "confirmed_at_bar": 17,
+                "confirmed_time": "09:47"
+            }
+        ],
+        "acceptance_count": 4,
+        "or_behavior": "acceptance",
+        "note": "OR analysis: drive=ROTATION, behavior=acceptance, swept_high=False, swept_low=False, accepted=['PDH', 'ASIA_HIGH', 'ASIA_LOW', 'LDN_LOW']"
+    },
+    "edge_fade": {
+        "bearish_extended": true,
+        "note": "Extreme bearish extension (breakdown scenario, skip)"
+    },
+    "tape_context": {
+        "ib_touch_counter": {
+            "touch_count_ibh": 0,
+            "touch_count_ibl": 0,
+            "first_touch_ibh_time": null,
+            "first_touch_ibl_time": null,
+            "last_touch_ibh_time": null,
+            "last_touch_ibl_time": null,
+            "note": "IB not complete"
+        },
+        "c_period": {
+            "classification": "na",
+            "c_period_close": null,
+            "note": "IB not complete"
+        },
+        "session_open_type": {
+            "classification": "acceptance",
+            "swept_levels": {},
+            "accepted_levels": {
+                "london_low": 22445.25,
+                "asia_high": 22475.25,
+                "asia_low": 22431.5,
+                "pdh": 22511.5,
+                "overnight_low": 22421.0
+            },
+            "window_high": 22549.0,
+            "window_low": 22400.0,
+            "window_range": 149.0,
+            "open_price": 22522.0,
+            "note": "Accepted beyond ['london_low', 'asia_high', 'asia_low', 'pdh', 'overnight_low']"
+        },
+        "va_entry_depth": {
+            "depth_pct": 14.1,
+            "position": "inside_from_below",
+            "quality": "low",
+            "vah": 22577.0,
+            "val": 22387.5,
+            "va_width": 189.5,
+            "note": "Study: losers enter at 23% depth, winners at 45%"
+        },
+        "dpoc_retention": {
+            "retention_pct": null,
+            "status": "unavailable",
+            "note": "DPOC migration data not available"
+        },
+        "delta_context": {
+            "cvd": -2092,
+            "cvd_trend": "falling",
+            "current_bar_delta": -142,
+            "delta_15bar_sum": -747,
+            "delta_15bar_bias": "sellers",
+            "session_volume": 72054,
+            "price_change": -105.5,
+            "divergence": "confirmed_down",
+            "divergence_note": "Price and CVD both falling — confirmed selling"
+        }
+    },
+    "regime_context": {
+        "atr14_daily": 351.21,
+        "atr14_5min": 37.358,
+        "prior_day_type": "neutral",
+        "consecutive_balance_days": 1,
+        "weekly_range": 731.5,
+        "weekly_high": 22511.5,
+        "weekly_low": 21780.0,
+        "weekly_direction": "up",
+        "weekly_atr": 244.38,
+        "vix_open": 17.68,
+        "vix_close": 18.48,
+        "vix_regime": "moderate",
+        "vix_5d_avg": 18.28,
+        "vix_change_pct": 4.94,
+        "composite_regime": "low_vol_trend",
+        "note": "Regime context: daily ATR, 5min ATR, prior day, balance streak, weekly, VIX, composite label."
+    }
+}

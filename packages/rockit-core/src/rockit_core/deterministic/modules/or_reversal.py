@@ -1,14 +1,19 @@
 """
-Opening Range Analysis — OR levels, sweeps, and drive classification.
+Opening Range Analysis — OR levels, sweeps, acceptance, and drive classification.
 
 Market structure module: Detects OR/EOR levels, premarket level sweeps,
-and opening drive direction. Pure observation — no trade signals.
+level acceptance, and opening drive direction. Pure observation — no trade signals.
 
-Detection logic (synced with research engine or_reversal.py):
+Two key OR patterns (mutually exclusive per level):
+  - **Judas sweep**: Price breaches a level then reverses (liquidity grab / fake-out)
+  - **Acceptance**: Price breaks a level and HOLDS beyond it (2+ consecutive 5-min closes)
+
+Detection logic (synced with research engine or_reversal.py + or_acceptance.py):
   1. OR = first 3 5-min bars (9:30-9:44), EOR = first 6 5-min bars (9:30-9:59)
   2. Sweep: EOR extreme near a premarket level (CLOSEST match within threshold)
   3. Dual-sweep: if both sides swept, keep deeper penetration only
   4. Drive classification: DRIVE_UP / DRIVE_DOWN / ROTATION based on OR close vs open
+  5. Acceptance: 2+ consecutive 5-min closes beyond a level within IB window (9:30-10:30)
 """
 
 import pandas as pd
@@ -20,6 +25,7 @@ OR_BARS = 3                       # First 3 5-min bars = Opening Range (9:30-9:4
 EOR_BARS = 6                      # First 6 5-min bars = Extended OR (9:30-9:59)
 SWEEP_THRESHOLD_RATIO = 0.17      # Level proximity = 17% of EOR range
 DRIVE_THRESHOLD = 0.4             # Opening drive classification threshold
+ACCEPT_CONSECUTIVE = 2            # Consecutive 5-min closes beyond level = acceptance
 
 
 def _to_float(val):
@@ -74,11 +80,84 @@ def _compute_atr14(bars_df):
     return float(atr) if not pd.isna(atr) else float((h - l).mean())
 
 
+def _detect_acceptance(rth_df, all_candidates, eor_high, eor_low):
+    """
+    Detect level acceptance: 2+ consecutive 5-min closes beyond a premarket level.
+
+    Acceptance = continuation (price broke the level and is holding).
+    Opposite of Judas sweep (fake-out then reversal).
+
+    Returns list of accepted levels with direction, level name, and confirmation bar.
+    """
+    accepted = []
+    if len(rth_df) < ACCEPT_CONSECUTIVE + 1:
+        return accepted
+
+    # Check each candidate level for acceptance
+    for name, lvl in all_candidates:
+        if lvl is None:
+            continue
+
+        # Check for closes ABOVE the level (bullish acceptance)
+        consecutive_above = 0
+        confirmed_bar = None
+        for i in range(len(rth_df)):
+            if rth_df.iloc[i]['close'] > lvl:
+                consecutive_above += 1
+                if consecutive_above >= ACCEPT_CONSECUTIVE:
+                    confirmed_bar = i
+                    break
+            else:
+                consecutive_above = 0
+
+        if confirmed_bar is not None:
+            # Verify the level was actually meaningful (price started near/below it)
+            # Check that at least one bar before acceptance had close <= level
+            bars_before = rth_df.iloc[:confirmed_bar - ACCEPT_CONSECUTIVE + 2]
+            if len(bars_before) > 0 and bars_before['close'].min() <= lvl:
+                accepted.append({
+                    'level_name': name,
+                    'level_price': float(lvl),
+                    'direction': 'bullish',
+                    'confirmed_at_bar': int(confirmed_bar),
+                    'confirmed_time': str(rth_df.index[confirmed_bar].time())[:5],
+                })
+                continue  # Don't check bearish for same level
+
+        # Check for closes BELOW the level (bearish acceptance)
+        consecutive_below = 0
+        confirmed_bar = None
+        for i in range(len(rth_df)):
+            if rth_df.iloc[i]['close'] < lvl:
+                consecutive_below += 1
+                if consecutive_below >= ACCEPT_CONSECUTIVE:
+                    confirmed_bar = i
+                    break
+            else:
+                consecutive_below = 0
+
+        if confirmed_bar is not None:
+            bars_before = rth_df.iloc[:confirmed_bar - ACCEPT_CONSECUTIVE + 2]
+            if len(bars_before) > 0 and bars_before['close'].max() >= lvl:
+                accepted.append({
+                    'level_name': name,
+                    'level_price': float(lvl),
+                    'direction': 'bearish',
+                    'confirmed_at_bar': int(confirmed_bar),
+                    'confirmed_time': str(rth_df.index[confirmed_bar].time())[:5],
+                })
+
+    return accepted
+
+
 def get_or_analysis(df_current, current_time_str="10:00", intraday_data=None):
     """
-    Analyze Opening Range levels, sweeps, and drive classification.
+    Analyze Opening Range: levels, sweeps (Judas), acceptance, and drive.
 
     Returns market structure observations — no trade signals.
+    Two key patterns per level:
+      - Judas sweep: breach + reversal (fade setup)
+      - Acceptance: breach + hold (continuation setup)
 
     Args:
         df_current: DataFrame with 5-min OHLCV data for current session
@@ -86,11 +165,11 @@ def get_or_analysis(df_current, current_time_str="10:00", intraday_data=None):
         intraday_data: Dict with premarket levels for sweep detection
 
     Returns:
-        dict: OR/EOR levels, sweep detection, drive classification
+        dict: OR/EOR levels, sweep detection, acceptance, drive classification
     """
     current_time = pd.to_datetime(current_time_str).time()
-    if current_time < _time(9, 30) or current_time >= _time(10, 16):
-        return {"note": "Outside OR window (9:30-10:15)"}
+    if current_time < _time(9, 30):
+        return {"note": "Pre-market (before 9:30)"}
 
     # Filter to RTH session only
     rth_df = df_current[df_current.index.time >= _time(9, 30)].copy()
@@ -195,6 +274,19 @@ def get_or_analysis(df_current, current_time_str="10:00", intraday_data=None):
         sweep_depth_pct = float(low_depth / eor_range * 100) if eor_range > 0 else 0.0
         closest_level = swept_low_name
 
+    # Acceptance detection: 2+ consecutive closes beyond a premarket level
+    all_candidates = high_candidates + low_candidates
+    accepted_levels = _detect_acceptance(rth_df, all_candidates, eor_high, eor_low)
+
+    # Classify OR behavior per level: acceptance (continuation) vs Judas (reversal)
+    # A swept level that price then reversed from = Judas
+    # A level with 2+ closes beyond = acceptance (continuation)
+    or_behavior = "neutral"
+    if swept_high or swept_low:
+        or_behavior = "judas_sweep"
+    if accepted_levels:
+        or_behavior = "acceptance" if not (swept_high or swept_low) else "mixed"
+
     return {
         "or_high": float(or_high),
         "or_low": float(or_low),
@@ -203,13 +295,22 @@ def get_or_analysis(df_current, current_time_str="10:00", intraday_data=None):
         "eor_low": float(eor_low),
         "eor_range": float(eor_range),
         "opening_drive": opening_drive,
+        # Judas sweep fields
         "swept_high": bool(swept_high),
         "swept_low": bool(swept_low),
         "sweep_direction": sweep_direction,
         "sweep_depth_pct": round(sweep_depth_pct, 1),
         "closest_level": closest_level,
-        "note": f"OR analysis: drive={opening_drive}, swept_high={swept_high}, swept_low={swept_low}"
-               + (f", closest={closest_level}" if closest_level else "")
+        # Acceptance fields
+        "accepted_levels": accepted_levels,
+        "acceptance_count": len(accepted_levels),
+        # Overall OR behavior classification
+        "or_behavior": or_behavior,
+        "note": (f"OR analysis: drive={opening_drive}, behavior={or_behavior}, "
+                 f"swept_high={swept_high}, swept_low={swept_low}"
+                 + (f", closest={closest_level}" if closest_level else "")
+                 + (f", accepted={[a['level_name'] for a in accepted_levels]}"
+                    if accepted_levels else ""))
     }
 
 

@@ -166,7 +166,7 @@ def save_results(result: BacktestResult, instrument: str, summary: dict):
     # Save full trade log
     trades_data = []
     for t in result.trades:
-        trades_data.append({
+        trade_dict = {
             "strategy": t.strategy_name,
             "setup": t.setup_type,
             "day_type": t.day_type,
@@ -178,7 +178,10 @@ def save_results(result: BacktestResult, instrument: str, summary: dict):
             "net_pnl": t.net_pnl,
             "exit_reason": t.exit_reason,
             "bars_held": t.bars_held,
-        })
+        }
+        if t.metadata:
+            trade_dict["metadata"] = t.metadata
+        trades_data.append(trade_dict)
 
     full_result = {
         "instrument": instrument,

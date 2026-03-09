@@ -8,10 +8,12 @@ Computes:
 3. Session open type (Acceptance / Judas / Rotation / Both)
 4. VA entry depth % (for 80P quality assessment)
 5. DPOC retention % (exhaustion detection)
+6. Delta context (CVD, delta trend, divergence detection)
 
 All functions are no-lookahead: they only use data up to current_time_str.
 """
 import pandas as pd
+import numpy as np
 from datetime import time
 
 
@@ -26,7 +28,8 @@ def get_tape_context(df_current, intraday_data, premarket_data, current_time_str
         current_time_str: "HH:MM" format (no lookahead past this time)
 
     Returns:
-        dict with ib_touch_counter, c_period, session_open_type, va_entry_depth, dpoc_retention
+        dict with ib_touch_counter, c_period, session_open_type, va_entry_depth,
+        dpoc_retention, delta_context
     """
     try:
         current_time = pd.to_datetime(current_time_str).time()
@@ -46,6 +49,7 @@ def get_tape_context(df_current, intraday_data, premarket_data, current_time_str
         "session_open_type": _get_session_open_type(available_df, premarket_data, current_time),
         "va_entry_depth": _get_va_entry_depth(ib_data, volume_profile),
         "dpoc_retention": _get_dpoc_retention(dpoc_data),
+        "delta_context": _get_delta_context(available_df),
     }
 
     return result
@@ -454,4 +458,117 @@ def _get_dpoc_retention(dpoc_data):
         "regime": dpoc_regime,
         "prior_exhausted": prior_exhausted,
         "note": "<40% = exhaustion (skip trade), >70% = conviction strong",
+    }
+
+
+def _get_delta_context(available_df):
+    """
+    Compute cumulative volume delta (CVD) context for tape reading.
+
+    CVD = running sum of (vol_ask - vol_bid) from session open.
+    Key signals:
+    - Price up + CVD down = bearish divergence (weak rally, likely to reverse)
+    - Price down + CVD up = bullish divergence (weak selloff, likely to bounce)
+    - Price up + CVD up = confirmed rally
+    - Price down + CVD down = confirmed selloff
+
+    Uses vol_ask, vol_bid columns from volumetric CSV data.
+    """
+    # Check if delta columns exist
+    has_vol_ask = 'vol_ask' in available_df.columns
+    has_vol_bid = 'vol_bid' in available_df.columns
+    has_vol_delta = 'vol_delta' in available_df.columns
+
+    if not (has_vol_ask and has_vol_bid) and not has_vol_delta:
+        return {
+            "cvd": None,
+            "cvd_trend": "unavailable",
+            "note": "No vol_ask/vol_bid or vol_delta columns in data",
+        }
+
+    # RTH session only (9:30+)
+    rth_df = available_df[available_df.index.time >= time(9, 30)]
+    if len(rth_df) < 2:
+        return {
+            "cvd": None,
+            "cvd_trend": "insufficient",
+            "note": "Less than 2 RTH bars",
+        }
+
+    # Compute per-bar delta
+    if has_vol_ask and has_vol_bid:
+        bar_delta = rth_df['vol_ask'] - rth_df['vol_bid']
+    else:
+        bar_delta = rth_df['vol_delta']
+
+    # CVD = cumulative sum
+    cvd = bar_delta.cumsum()
+    cvd_current = int(cvd.iloc[-1])
+    cvd_values = cvd.values
+
+    # Session total volume for context
+    session_volume = int(rth_df['volume'].sum()) if 'volume' in rth_df.columns else None
+
+    # CVD trend: compare last 30 bars vs first 30 bars
+    n = len(cvd_values)
+    if n >= 30:
+        recent_cvd = float(np.mean(cvd_values[-15:]))
+        earlier_cvd = float(np.mean(cvd_values[:15]))
+        cvd_slope = recent_cvd - earlier_cvd
+    elif n >= 10:
+        mid = n // 2
+        recent_cvd = float(np.mean(cvd_values[mid:]))
+        earlier_cvd = float(np.mean(cvd_values[:mid]))
+        cvd_slope = recent_cvd - earlier_cvd
+    else:
+        cvd_slope = float(cvd_values[-1] - cvd_values[0])
+
+    # Classify CVD trend
+    if abs(cvd_slope) < 50:
+        cvd_trend = "flat"
+    elif cvd_slope > 0:
+        cvd_trend = "rising"
+    else:
+        cvd_trend = "falling"
+
+    # Price direction (close-to-close)
+    price_start = float(rth_df.iloc[0]['close'])
+    price_end = float(rth_df.iloc[-1]['close'])
+    price_change = price_end - price_start
+
+    # Divergence detection
+    if price_change > 3 and cvd_trend == "falling":
+        divergence = "bearish_divergence"
+        divergence_note = "Price rising but CVD falling — weak rally, sellers absorbing"
+    elif price_change < -3 and cvd_trend == "rising":
+        divergence = "bullish_divergence"
+        divergence_note = "Price falling but CVD rising — weak selloff, buyers absorbing"
+    elif price_change > 3 and cvd_trend == "rising":
+        divergence = "confirmed_up"
+        divergence_note = "Price and CVD both rising — confirmed buying"
+    elif price_change < -3 and cvd_trend == "falling":
+        divergence = "confirmed_down"
+        divergence_note = "Price and CVD both falling — confirmed selling"
+    else:
+        divergence = "neutral"
+        divergence_note = "No clear divergence or confirmation"
+
+    # Delta at current bar
+    current_delta = int(bar_delta.iloc[-1])
+
+    # Rolling delta (last 15 bars) — recent order flow pressure
+    last_15 = bar_delta.iloc[-min(15, n):]
+    delta_15bar_sum = int(last_15.sum())
+    delta_15bar_bias = "buyers" if delta_15bar_sum > 50 else "sellers" if delta_15bar_sum < -50 else "neutral"
+
+    return {
+        "cvd": cvd_current,
+        "cvd_trend": cvd_trend,
+        "current_bar_delta": current_delta,
+        "delta_15bar_sum": delta_15bar_sum,
+        "delta_15bar_bias": delta_15bar_bias,
+        "session_volume": session_volume,
+        "price_change": round(price_change, 2),
+        "divergence": divergence,
+        "divergence_note": divergence_note,
     }
