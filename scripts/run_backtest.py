@@ -378,6 +378,19 @@ def main():
     if not args.no_save:
         save_results(result, instrument, summary)
 
+    # --- Persist to research DuckDB ---
+    try:
+        from rockit_core.research.db import connect as db_connect, persist_backtest_from_result
+        db_conn = db_connect()
+        strategy_names = [s.name for s in strategies]
+        run_id = persist_backtest_from_result(
+            db_conn, result, instrument, summary, strategy_names,
+        )
+        db_conn.close()
+        print(f"Persisted to research DB (run_id: {run_id})")
+    except Exception as e:
+        print(f"Warning: Could not persist to research DB: {e}")
+
     # --- Save as baseline if requested ---
     if args.save_baseline:
         save_baseline(summary, instrument)
