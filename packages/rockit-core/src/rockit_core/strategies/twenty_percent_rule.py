@@ -21,12 +21,18 @@ Target: 2R (2x the stop distance = 4x ATR from entry)
 Max 1 entry per session.
 """
 
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from datetime import time as _time
 import pandas as pd
 
+from rockit_core.models.signals import Direction, EntrySignal
+from rockit_core.models.stop_models import ATRStopModel
+from rockit_core.models.target_models import RMultipleTarget
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
+
+if TYPE_CHECKING:
+    from rockit_core.models.base import StopModel, TargetModel
 
 # ── Parameters ────────────────────────────────────────────────
 ACCEPT_5M_BARS = 3               # 3 consecutive 5-min closes for acceptance
@@ -55,7 +61,18 @@ class TwentyPercentRule(StrategyBase):
     Watches for 3 consecutive 5-min closes beyond IB boundary.
     When acceptance confirmed, enters in the extension direction
     with 2x ATR stop and 2R target.
+
+    Constructor accepts optional stop_model and target_model for pluggable
+    execution. Defaults to ATRStopModel(2.0) and RMultipleTarget(2.0).
     """
+
+    def __init__(
+        self,
+        stop_model: Optional['StopModel'] = None,
+        target_model: Optional['TargetModel'] = None,
+    ):
+        self._stop_model = stop_model or ATRStopModel(ATR_STOP_MULT)
+        self._target_model = target_model or RMultipleTarget(TARGET_R_MULTIPLE)
 
     @property
     def name(self) -> str:
@@ -143,19 +160,28 @@ class TwentyPercentRule(StrategyBase):
         if direction != self._allowed_direction:
             return None
 
-        # Compute stop and target
+        # Compute stop and target via pluggable models
         entry_price = current_price
-        risk = ATR_STOP_MULT * self._atr14
+        model_direction = Direction.LONG if direction == 'LONG' else Direction.SHORT
+        entry_signal = EntrySignal(
+            model_name=self.name,
+            direction=model_direction,
+            price=entry_price,
+            confidence=0.8,
+            setup_type=f'20P_IB_EXT_{direction}',
+        )
+
+        # Force strategy-computed ATR for ATRStopModel
+        ctx = dict(session_context)
+        ctx['atr14'] = self._atr14
+
+        stop_level = self._stop_model.compute(entry_signal, bar, ctx)
+        risk = stop_level.distance_points
 
         if risk <= 0:
             return None
 
-        if direction == 'LONG':
-            stop_price = entry_price - risk
-            target_price = entry_price + TARGET_R_MULTIPLE * risk
-        else:
-            stop_price = entry_price + risk
-            target_price = entry_price - TARGET_R_MULTIPLE * risk
+        target_spec = self._target_model.compute(entry_signal, stop_level, bar, ctx)
 
         self._triggered = True
         self._entry_count += 1
@@ -164,8 +190,8 @@ class TwentyPercentRule(StrategyBase):
             timestamp=bar.get('timestamp', bar.name) if hasattr(bar, 'name') else bar.get('timestamp'),
             direction=direction,
             entry_price=entry_price,
-            stop_price=stop_price,
-            target_price=target_price,
+            stop_price=stop_level.price,
+            target_price=target_spec.price,
             strategy_name=self.name,
             setup_type=f'20P_IB_EXT_{direction}',
             day_type=session_context.get('day_type', ''),
@@ -176,5 +202,7 @@ class TwentyPercentRule(StrategyBase):
                 'atr14': self._atr14,
                 'acceptance_bars': ACCEPT_5M_BARS,
                 'risk_pts': risk,
+                'stop_model': self._stop_model.name,
+                'target_model': self._target_model.name,
             },
         )

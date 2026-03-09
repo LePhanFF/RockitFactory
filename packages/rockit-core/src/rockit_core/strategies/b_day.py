@@ -37,11 +37,14 @@ Study Results:
   - Tier 3 (first-touch): 82% WR, PF 9.35, 3.4 trades/mo
 """
 
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 
 import pandas as pd
 
 from datetime import time as _time
+from rockit_core.models.signals import Direction, EntrySignal
+from rockit_core.models.stop_models import IBEdgeStop
+from rockit_core.models.target_models import LevelTarget
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
 from rockit_core.config.constants import (
@@ -50,11 +53,26 @@ from rockit_core.config.constants import (
     BDAY_STOP_IB_BUFFER,
 )
 
+if TYPE_CHECKING:
+    from rockit_core.models.base import StopModel, TargetModel
+
 # B-Day last entry time: entries after 14:00 have insufficient time to reach target.
 BDAY_LAST_ENTRY_TIME = _time(14, 0)
 
 
 class BDayStrategy(StrategyBase):
+    """B-Day IBL Fade with pluggable stop/target models.
+
+    Defaults to IBEdgeStop(0.1) and LevelTarget('ib_mid').
+    """
+
+    def __init__(
+        self,
+        stop_model: Optional['StopModel'] = None,
+        target_model: Optional['TargetModel'] = None,
+    ):
+        self._stop_model = stop_model or IBEdgeStop(BDAY_STOP_IB_BUFFER)
+        self._target_model = target_model or LevelTarget('ib_mid')
 
     @property
     def name(self) -> str:
@@ -110,8 +128,26 @@ class BDayStrategy(StrategyBase):
                 if current_price > self._ib_low and current_price < self._ib_high:
                     # Acceptance confirmed — price is inside IB → ENTER LONG
                     entry_price = current_price
-                    stop_price = self._ib_low - (self._ib_range * BDAY_STOP_IB_BUFFER)
-                    target_price = self._ib_mid
+
+                    # Use pluggable models for stop/target
+                    entry_signal = EntrySignal(
+                        model_name=self.name,
+                        direction=Direction.LONG,
+                        price=entry_price,
+                        confidence=0.8,
+                        setup_type='B_DAY_IBL_FADE',
+                    )
+                    ctx = dict(session_context)
+                    ctx.setdefault('ib_high', self._ib_high)
+                    ctx.setdefault('ib_low', self._ib_low)
+                    ctx.setdefault('ib_range', self._ib_range)
+                    ctx.setdefault('ib_mid', self._ib_mid)
+
+                    stop_level = self._stop_model.compute(entry_signal, bar, ctx)
+                    target_spec = self._target_model.compute(entry_signal, stop_level, bar, ctx)
+
+                    stop_price = stop_level.price
+                    target_price = target_spec.price
 
                     # R:R sanity check — skip if risk > 2.5x reward
                     risk = abs(entry_price - stop_price)
@@ -134,6 +170,10 @@ class BDayStrategy(StrategyBase):
                         setup_type='B_DAY_IBL_FADE',
                         day_type=session_context.get('day_type', ''),
                         confidence=confidence,
+                        metadata={
+                            'stop_model': self._stop_model.name,
+                            'target_model': self._target_model.name,
+                        },
                     )
                 else:
                     # Failed acceptance — reset (first touch consumed, no more trades)

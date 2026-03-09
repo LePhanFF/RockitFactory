@@ -10,6 +10,7 @@ from rockit_core.models.stop_models import (
     IBEdgeStop,
     LevelBufferStop,
     StructuralStop,
+    VAEdgeStop,
 )
 from rockit_core.models.target_models import (
     AdaptiveTarget,
@@ -213,6 +214,42 @@ class TestAdaptiveTarget:
 
     def test_name(self):
         assert AdaptiveTarget().name == "adaptive"
+
+
+# ========== VA EDGE STOP ==========
+
+class TestVAEdgeStop:
+    def test_long_stop_below_val(self):
+        model = VAEdgeStop(10.0)
+        ctx = _ctx()
+        ctx['prior_va_val'] = 19900.0
+        ctx['prior_va_vah'] = 20100.0
+        result = model.compute(_entry(Direction.LONG, 19950.0), _bar(), ctx)
+        # LONG: prior_va_val - buffer = 19900 - 10 = 19890
+        assert result.price == 19890.0
+        assert result.distance_points == 60.0  # |19950 - 19890|
+
+    def test_short_stop_above_vah(self):
+        model = VAEdgeStop(10.0)
+        ctx = _ctx()
+        ctx['prior_va_val'] = 19900.0
+        ctx['prior_va_vah'] = 20100.0
+        result = model.compute(_entry(Direction.SHORT, 20050.0), _bar(), ctx)
+        # SHORT: prior_va_vah + buffer = 20100 + 10 = 20110
+        assert result.price == 20110.0
+        assert result.distance_points == 60.0  # |20050 - 20110|
+
+    def test_name(self):
+        assert VAEdgeStop(10.0).name == "va_edge_10.0pts"
+        assert VAEdgeStop(5.0).name == "va_edge_5.0pts"
+
+    def test_fallback_when_no_va_levels(self):
+        model = VAEdgeStop(10.0)
+        ctx = _ctx()  # No prior_va_val/vah
+        result = model.compute(_entry(Direction.LONG, 20000.0), _bar(), ctx)
+        # Falls back to entry_price: 20000 - 10 = 19990
+        assert result.price == 19990.0
+        assert result.distance_points == 10.0
 
 
 # ========== REGISTRY ==========

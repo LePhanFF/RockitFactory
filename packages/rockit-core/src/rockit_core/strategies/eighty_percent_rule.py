@@ -28,12 +28,18 @@ FILTERS:
 """
 
 from datetime import time as _time
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 import pandas as pd
 import numpy as np
 
+from rockit_core.models.signals import Direction, EntrySignal
+from rockit_core.models.stop_models import VAEdgeStop
+from rockit_core.models.target_models import RMultipleTarget
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
+
+if TYPE_CHECKING:
+    from rockit_core.models.base import StopModel, TargetModel
 
 
 # ── 80P Rule Constants (matched to research source) ──────────
@@ -57,9 +63,13 @@ class EightyPercentRule(StrategyBase):
     """
 
     def __init__(self, target_mode: str = TARGET_MODE,
-                 entry_model: str = ENTRY_MODEL):
+                 entry_model: str = ENTRY_MODEL,
+                 stop_model: Optional['StopModel'] = None,
+                 target_model: Optional['TargetModel'] = None):
         self._target_mode = target_mode
         self._entry_model = entry_model
+        self._stop_model = stop_model or VAEdgeStop(STOP_BUFFER_PTS)
+        self._target_model = target_model or RMultipleTarget(2.0)
 
     @property
     def name(self) -> str:
@@ -169,14 +179,27 @@ class EightyPercentRule(StrategyBase):
                 if accept_dir and self._entry_model == 'acceptance':
                     # Enter immediately at acceptance candle close
                     entry = self._accept_candle_close
+                    model_dir = Direction.LONG if accept_dir == 'LONG' else Direction.SHORT
+                    entry_signal = EntrySignal(
+                        model_name=self.name,
+                        direction=model_dir,
+                        price=entry,
+                        confidence=0.8,
+                        setup_type='80P_RETURN_TO_BALANCE',
+                    )
+                    ctx = dict(session_context)
+                    ctx.setdefault('prior_va_vah', self._prior_vah)
+                    ctx.setdefault('prior_va_val', self._prior_val)
+
+                    stop_level = self._stop_model.compute(entry_signal, bar, ctx)
+                    stop = stop_level.price
+
+                    target = self._compute_target(accept_dir, entry, stop)
+
                     if accept_dir == 'SHORT':
-                        stop = self._prior_vah + STOP_BUFFER_PTS
-                        target = self._compute_target('SHORT', entry, stop)
                         risk = stop - entry
                         reward = entry - target
                     else:
-                        stop = self._prior_val - STOP_BUFFER_PTS
-                        target = self._compute_target('LONG', entry, stop)
                         risk = entry - stop
                         reward = target - entry
 
@@ -256,7 +279,15 @@ class EightyPercentRule(StrategyBase):
             # SHORT: price bounces back UP to acceptance candle HIGH
             if high >= self._accept_candle_high:
                 entry = self._accept_candle_high
-                stop = self._prior_vah + STOP_BUFFER_PTS
+                entry_signal = EntrySignal(
+                    model_name=self.name, direction=Direction.SHORT,
+                    price=entry, confidence=0.8, setup_type='80P_RETURN_TO_BALANCE',
+                )
+                ctx = dict(session_context)
+                ctx.setdefault('prior_va_vah', self._prior_vah)
+                ctx.setdefault('prior_va_val', self._prior_val)
+                stop_level = self._stop_model.compute(entry_signal, bar, ctx)
+                stop = stop_level.price
                 target = self._compute_target('SHORT', entry, stop)
                 risk = stop - entry
                 reward = entry - target
@@ -270,7 +301,15 @@ class EightyPercentRule(StrategyBase):
             # LONG: price pulls back DOWN to acceptance candle LOW
             if low <= self._accept_candle_low:
                 entry = self._accept_candle_low
-                stop = self._prior_val - STOP_BUFFER_PTS
+                entry_signal = EntrySignal(
+                    model_name=self.name, direction=Direction.LONG,
+                    price=entry, confidence=0.8, setup_type='80P_RETURN_TO_BALANCE',
+                )
+                ctx = dict(session_context)
+                ctx.setdefault('prior_va_vah', self._prior_vah)
+                ctx.setdefault('prior_va_val', self._prior_val)
+                stop_level = self._stop_model.compute(entry_signal, bar, ctx)
+                stop = stop_level.price
                 target = self._compute_target('LONG', entry, stop)
                 risk = entry - stop
                 reward = target - entry
@@ -305,6 +344,8 @@ class EightyPercentRule(StrategyBase):
                 'va_range': round(self._va_range, 2),
                 'accept_candle_high': round(self._accept_candle_high, 2),
                 'accept_candle_low': round(self._accept_candle_low, 2),
+                'stop_model': self._stop_model.name,
+                'target_model': self._target_model.name,
             },
         )
 

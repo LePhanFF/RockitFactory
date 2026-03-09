@@ -24,8 +24,8 @@ def test_entry_models_count():
 
 
 def test_stop_models_count():
-    """All stop models are registered (4 original + 11 new)."""
-    assert len(STOP_MODEL_FACTORIES) == 15
+    """All stop models are registered (4 original + 11 new + 2 VA edge)."""
+    assert len(STOP_MODEL_FACTORIES) == 17
 
 
 def test_target_models_count():
@@ -50,6 +50,7 @@ def test_stop_model_keys():
         "fixed_10pts", "fixed_15pts", "fixed_20pts", "fixed_30pts",
         "ib_edge_10pct", "ib_edge_20pct",
         "structural_vwap_40pct", "structural_ema20_40pct",
+        "va_edge_10pts", "va_edge_5pts",
     }
     assert set(STOP_MODEL_FACTORIES.keys()) == expected
 

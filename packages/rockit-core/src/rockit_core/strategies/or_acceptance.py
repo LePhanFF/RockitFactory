@@ -34,12 +34,18 @@ emits on first post-IB on_bar() call.
 """
 
 from datetime import time as _time
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, TYPE_CHECKING
 import pandas as pd
 import numpy as np
 
+from rockit_core.models.signals import Direction, EntrySignal
+from rockit_core.models.stop_models import ATRStopModel
+from rockit_core.models.target_models import RMultipleTarget
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
+
+if TYPE_CHECKING:
+    from rockit_core.models.base import StopModel, TargetModel
 
 # ── Time Window Constants ──────────────────────────────────────
 OR_BARS = 15       # Opening Range = first 15 bars (9:30-9:44)
@@ -101,7 +107,18 @@ class ORAcceptanceStrategy(StrategyBase):
     Scans IB bars for level acceptance on 5-min timeframe, then checks
     if price retests the level (limit fill simulation) on 1-min bars.
     Skip BOTH sessions where EOR swept levels on both sides.
+
+    Constructor accepts optional stop_model and target_model for pluggable
+    execution. Defaults to ATRStopModel(0.5) and RMultipleTarget(2.0).
     """
+
+    def __init__(
+        self,
+        stop_model: Optional['StopModel'] = None,
+        target_model: Optional['TargetModel'] = None,
+    ):
+        self._stop_model = stop_model or ATRStopModel(ATR_STOP_MULT)
+        self._target_model = target_model or RMultipleTarget(2.0)
 
     @property
     def name(self) -> str:
@@ -198,7 +215,7 @@ class ORAcceptanceStrategy(StrategyBase):
 
         # ── Try LONG acceptance first ─────────────────────────────
         entry = self._find_v3_entry(
-            ib_bars, bars_5m, long_candidates, 'LONG', atr14)
+            ib_bars, bars_5m, long_candidates, 'LONG', atr14, session_context)
         if entry is not None:
             self._cached_signal = Signal(
                 timestamp=entry['bar_ts'],
@@ -217,13 +234,15 @@ class ORAcceptanceStrategy(StrategyBase):
                     'atr14': atr14,
                     'risk_pts': entry['risk'],
                     'version': 'v3',
+                    'stop_model': entry.get('stop_model', ''),
+                    'target_model': entry.get('target_model', ''),
                 },
             )
             return
 
         # ── Try SHORT acceptance ──────────────────────────────────
         entry = self._find_v3_entry(
-            ib_bars, bars_5m, short_candidates, 'SHORT', atr14)
+            ib_bars, bars_5m, short_candidates, 'SHORT', atr14, session_context)
         if entry is not None:
             self._cached_signal = Signal(
                 timestamp=entry['bar_ts'],
@@ -242,10 +261,12 @@ class ORAcceptanceStrategy(StrategyBase):
                     'atr14': atr14,
                     'risk_pts': entry['risk'],
                     'version': 'v3',
+                    'stop_model': entry.get('stop_model', ''),
+                    'target_model': entry.get('target_model', ''),
                 },
             )
 
-    def _find_v3_entry(self, ib_bars, bars_5m, candidates, direction, atr14):
+    def _find_v3_entry(self, ib_bars, bars_5m, candidates, direction, atr14, session_context=None):
         """Find a v3 entry: 2x 5-min acceptance + limit fill at level."""
         best_entry = None
         best_fill_idx = float('inf')
@@ -270,36 +291,47 @@ class ORAcceptanceStrategy(StrategyBase):
             if fill_idx < 0:
                 continue
 
-            # Compute risk
-            risk = ATR_STOP_MULT * atr14
+            # Compute risk via pluggable stop model
+            model_direction = Direction.LONG if direction == 'LONG' else Direction.SHORT
+            entry_signal = EntrySignal(
+                model_name=self.name,
+                direction=model_direction,
+                price=level,
+                confidence=0.8,
+                setup_type=f'OR_ACCEPTANCE_{direction}',
+            )
+
+            fill_bar = ib_bars.iloc[fill_idx]
+            ctx = dict(session_context) if session_context else {}
+            ctx['atr14'] = atr14
+
+            stop_level = self._stop_model.compute(entry_signal, fill_bar, ctx)
+            risk = stop_level.distance_points
+
+            # Apply min/max risk capping (strategy-level concern)
             if risk < MIN_RISK_PTS or risk > MAX_RISK_PTS:
                 continue
+
+            target_spec = self._target_model.compute(entry_signal, stop_level, fill_bar, ctx)
 
             # Pick earliest fill across all candidate levels
             if fill_idx < best_fill_idx:
                 best_fill_idx = fill_idx
 
-                entry_price = level
-                if direction == 'LONG':
-                    stop = level - risk
-                    target = level + 2 * risk
-                else:
-                    stop = level + risk
-                    target = level - 2 * risk
-
-                bar = ib_bars.iloc[fill_idx]
-                bar_ts = (bar.get('timestamp', bar.name)
-                          if hasattr(bar, 'name')
-                          else bar.get('timestamp'))
+                bar_ts = (fill_bar.get('timestamp', fill_bar.name)
+                          if hasattr(fill_bar, 'name')
+                          else fill_bar.get('timestamp'))
 
                 best_entry = {
-                    'entry_price': entry_price,
-                    'stop': stop,
-                    'target': target,
+                    'entry_price': level,
+                    'stop': stop_level.price,
+                    'target': target_spec.price,
                     'risk': risk,
                     'level': level,
                     'level_name': name,
                     'bar_ts': bar_ts,
+                    'stop_model': self._stop_model.name,
+                    'target_model': self._target_model.name,
                 }
 
         return best_entry

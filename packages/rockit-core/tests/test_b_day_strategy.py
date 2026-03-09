@@ -7,6 +7,8 @@ import pytest
 
 from rockit_core.strategies.b_day import BDayStrategy
 from rockit_core.config.constants import BDAY_ACCEPTANCE_BARS, BDAY_TOUCH_TOLERANCE
+from rockit_core.models.stop_models import ATRStopModel, IBEdgeStop
+from rockit_core.models.target_models import RMultipleTarget, LevelTarget
 
 
 @pytest.fixture
@@ -347,3 +349,69 @@ class TestSessionReset:
         assert strategy._first_touch_taken is False
         assert strategy._touch_bar_index is None
         assert strategy._vwap_aligned is False
+
+
+# --- Pluggable Model Tests ---
+
+class TestPluggableModels:
+    def test_default_models_produce_same_output(self, session_context):
+        """Default IBEdgeStop(0.1) + LevelTarget('ib_mid') matches hardcoded logic."""
+        strategy = BDayStrategy()  # No custom models
+        strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
+
+        touch = make_bar(14910, low=14898, timestamp=datetime.now())
+        strategy.on_bar(touch, 0, session_context)
+        accept = make_bar(14920, low=14910, timestamp=datetime.now())
+        signal = strategy.on_bar(accept, BDAY_ACCEPTANCE_BARS, session_context)
+
+        assert signal is not None
+        assert signal.stop_price == 14900 - (100 * 0.1)  # 14890
+        assert signal.target_price == 14950  # IB midpoint
+
+    def test_custom_stop_model_changes_stop(self):
+        """Injecting ATRStopModel produces a different stop price."""
+        strategy = BDayStrategy(stop_model=ATRStopModel(1.0))
+        strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
+
+        ctx = {'day_type': 'b_day', 'bar_time': _time(11, 0), 'atr14': 20.0}
+        touch = make_bar(14910, low=14898, timestamp=datetime.now())
+        strategy.on_bar(touch, 0, ctx)
+        accept = make_bar(14920, low=14910, timestamp=datetime.now())
+        signal = strategy.on_bar(accept, BDAY_ACCEPTANCE_BARS, ctx)
+
+        assert signal is not None
+        # ATRStopModel(1.0) with atr14=20 → stop = 14920 - 20 = 14900
+        assert signal.stop_price == pytest.approx(14900, abs=0.01)
+        # Different from default IBEdgeStop stop (14890)
+        assert signal.stop_price != 14890
+
+    def test_custom_target_model_changes_target(self, session_context):
+        """Injecting RMultipleTarget produces a different target price."""
+        strategy = BDayStrategy(target_model=RMultipleTarget(2.0))
+        strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
+
+        touch = make_bar(14910, low=14898, timestamp=datetime.now())
+        strategy.on_bar(touch, 0, session_context)
+        accept = make_bar(14920, low=14910, timestamp=datetime.now())
+        signal = strategy.on_bar(accept, BDAY_ACCEPTANCE_BARS, session_context)
+
+        assert signal is not None
+        # RMultipleTarget(2.0) → target = entry + 2 * risk
+        # Different from default LevelTarget('ib_mid') = 14950
+        assert signal.target_price != 14950
+
+    def test_metadata_includes_model_names(self, session_context):
+        """Signal metadata should include stop_model and target_model names."""
+        strategy = BDayStrategy()
+        strategy.on_session_start('2025-01-01', 15000, 14900, 100, {})
+
+        touch = make_bar(14910, low=14898, timestamp=datetime.now())
+        strategy.on_bar(touch, 0, session_context)
+        accept = make_bar(14920, low=14910, timestamp=datetime.now())
+        signal = strategy.on_bar(accept, BDAY_ACCEPTANCE_BARS, session_context)
+
+        assert signal is not None
+        assert 'stop_model' in signal.metadata
+        assert 'target_model' in signal.metadata
+        assert signal.metadata['stop_model'] == 'ib_edge_10pct'
+        assert signal.metadata['target_model'] == 'level_ib_mid'

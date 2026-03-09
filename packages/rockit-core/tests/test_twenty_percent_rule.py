@@ -12,6 +12,8 @@ from rockit_core.strategies.twenty_percent_rule import (
     TARGET_R_MULTIPLE,
     _compute_atr14,
 )
+from rockit_core.models.stop_models import ATRStopModel, FixedPointsStop
+from rockit_core.models.target_models import RMultipleTarget
 
 
 @pytest.fixture
@@ -452,3 +454,71 @@ class TestEntryCutoff:
         strategy.on_bar(make_bar(20065), 9, session_context)
         sig = strategy.on_bar(make_bar(20070), 14, session_context)
         assert sig is not None
+
+
+# --- Pluggable Model Tests ---
+
+class TestPluggableModels:
+    def test_default_models_produce_same_output(self, session_context):
+        """Default ATRStopModel(2.0) + RMultipleTarget(2.0) matches hardcoded logic."""
+        strategy = TwentyPercentRule()  # No custom models
+        session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+        atr = strategy._atr14
+
+        strategy.on_bar(make_bar(20060), 4, session_context)
+        strategy.on_bar(make_bar(20065), 9, session_context)
+        sig = strategy.on_bar(make_bar(20070), 14, session_context)
+
+        assert sig is not None
+        risk = ATR_STOP_MULT * atr
+        assert sig.stop_price == pytest.approx(20070 - risk, abs=0.01)
+        assert sig.target_price == pytest.approx(20070 + TARGET_R_MULTIPLE * risk, abs=0.01)
+
+    def test_custom_stop_model_changes_stop(self, session_context):
+        """Injecting FixedPointsStop produces a different stop price."""
+        strategy = TwentyPercentRule(stop_model=FixedPointsStop(25.0))
+        session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+
+        strategy.on_bar(make_bar(20060), 4, session_context)
+        strategy.on_bar(make_bar(20065), 9, session_context)
+        sig = strategy.on_bar(make_bar(20070), 14, session_context)
+
+        assert sig is not None
+        # FixedPointsStop(25) → stop = 20070 - 25 = 20045
+        assert sig.stop_price == pytest.approx(20045, abs=0.01)
+        # Target = 2R = 20070 + 2*25 = 20120
+        assert sig.target_price == pytest.approx(20120, abs=0.01)
+
+    def test_custom_target_model_changes_target(self, session_context):
+        """Injecting RMultipleTarget(3.0) produces a different target."""
+        strategy = TwentyPercentRule(target_model=RMultipleTarget(3.0))
+        session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+        atr = strategy._atr14
+        risk = ATR_STOP_MULT * atr
+
+        strategy.on_bar(make_bar(20060), 4, session_context)
+        strategy.on_bar(make_bar(20065), 9, session_context)
+        sig = strategy.on_bar(make_bar(20070), 14, session_context)
+
+        assert sig is not None
+        # 3R target instead of 2R
+        assert sig.target_price == pytest.approx(20070 + 3.0 * risk, abs=0.01)
+
+    def test_metadata_includes_model_names(self, session_context):
+        """Signal metadata should include stop_model and target_model names."""
+        strategy = TwentyPercentRule()
+        session_context['ib_bars'] = make_ib_bars()
+        strategy.on_session_start('2025-01-15', 20050, 19950, 100, session_context)
+
+        strategy.on_bar(make_bar(20060), 4, session_context)
+        strategy.on_bar(make_bar(20065), 9, session_context)
+        sig = strategy.on_bar(make_bar(20070), 14, session_context)
+
+        assert sig is not None
+        assert 'stop_model' in sig.metadata
+        assert 'target_model' in sig.metadata
+        assert sig.metadata['stop_model'] == '2.0_atr'
+        assert sig.metadata['target_model'] == '2r'
