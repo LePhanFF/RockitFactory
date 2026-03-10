@@ -192,20 +192,118 @@ Bias filter preserved ALL 154 strong wins while eliminating all 71 lucky wins an
 4. **LONG trades = 77% of all losses** — 57.8% WR vs SHORT 68.9% WR. Bullish bias (171/270 sessions) + LONG direction = overtrading.
 5. **24 remaining avoidable losses**: 19 from 80P (day_type/anti-chase), 4 from OR Rev (counter-tape), 1 from B-Day (trend day).
 
-### 23 Observations in DuckDB
+### 29 Observations in DuckDB
 
-15 from Phase 4 analysis + 8 new from Phase 5 bias-filtered analysis. All persisted in `observations` table for agent/LLM consumption. Key new observations:
+15 from Phase 4 analysis + 8 from Phase 5 bias-filtered analysis + 6 from 80P LONG deep dive. All persisted in `observations` table for agent/LLM consumption. Key observations:
 - `p5_01`: 80P SHORT >> LONG (60.9% vs 38.7% WR)
 - `p5_03`: CRI at IB close = useless (100% STAND_DOWN)
 - `p5_05`: LONG side carries 77% of losses
 - `p5_06`: Bias filter preserves ALL strong wins, removes only bad/lucky trades
+- `p5_09`: 80P LONG entry <= POC = 52.9% WR, PF 3.48 (best discriminator)
+- `p5_10`: 80P LONG on Neutral Range = 30% WR (kill zone)
+- `p5_11`: 80P LONG non-B/p TPO = 0% WR (6 trades, -$6K)
+- `p5_12`: POC target model est $9,089 net (vs current 2R $7,520)
+- `p5_13`: 80P LONG MFE/MAE: winners avg +97.8pts, losers avg +21.2pts
+- `p5_14`: 80P SHORT model is solid, P-Day Down = 0% WR (3 trades)
 
 ---
 
-## 7. Next Steps
+## 8. 80P LONG Deep Dive: Model & Filter Optimization
 
-1. **Decide filter config for production** — Bias only (B) vs Full combo (C) vs Combo+Regime (D)
-2. **Consider disabling 80P LONG** — 38.7% WR is below breakeven after costs
-3. **Fix NWOG** — wider stop or trailing exit, or re-study with different parameters
-4. **Study NDOG (daily gap)** — may overlap with B-Day, needs validation
-5. **Re-optimize disabled strategies** — See [strategy expansion roadmap](../brainstorm/12-strategy-expansion-roadmap.md)
+### Current State (Bias-filtered Run B)
+
+80P LONG: **31 trades, 12W/19L, 38.7% WR, PF 1.02, $350 net**
+
+Current models:
+- **Stop**: `VAEdgeStop(10pts)` — prior VAL - 10pts
+- **Target**: `RMultipleTarget(2.0)` — 2R from entry
+- **Entry**: `acceptance` — 30-min candle close acceptance into VA
+
+### Discriminator Analysis
+
+| Filter | Trades | Wins | WR% | PF | Net PnL | Exp/Trade |
+|--------|--------|------|-----|-----|---------|-----------|
+| **ALL 80P LONG** | 31 | 12 | 38.7% | 1.02 | $350 | $11 |
+| Entry <= POC | 17 | 9 | 52.9% | 3.48 | $7,520 | $442 |
+| Entry > POC | 14 | 3 | 21.4% | 0.40 | -$7,170 | -$512 |
+| IB >= 200 | 14 | 7 | 50.0% | 1.60 | $3,065 | $219 |
+| TPO: B/p_shape | 25 | 12 | 48.0% | 1.71 | $6,398 | $256 |
+| TPO: other | 6 | 0 | 0.0% | 0.00 | -$6,047 | -$1,008 |
+| Block Neutral Range | 11 | 6 | 54.5% | 2.75 | $5,195 | $472 |
+| **Entry<=POC + B/p_shape** | **16** | **9** | **56.2%** | **3.50** | **$7,539** | **$471** |
+| POC + IB>=150 + TPO | 9 | 5 | 55.6% | 3.32 | $3,396 | $377 |
+| POC + No NeutralRange | 7 | 4 | 57.1% | 3.66 | $2,481 | $354 |
+
+**Best single filter: Entry <= POC** — PF jumps from 1.02 to 3.48, $442/trade expectancy.
+
+### MAE/MFE Insights
+
+| Metric | Winners (12) | Losers (19) |
+|--------|-------------|-------------|
+| Avg MFE | +97.8 pts | +21.2 pts |
+| Avg MAE | +33.6 pts | +53.0 pts |
+| Avg bars held | 179 | 75 |
+| Exit reasons | EOD (8), TARGET (4) | STOP (17), EOD (2) |
+
+- Only **4 of 12 winners hit TARGET** — 8 exit at EOD with partial profit. The 2R target overshoots for most LONG setups.
+- Only **6 of 19 losers went 20+ pts favorable first** — most losers never gain momentum.
+- Breakeven trailing at 1R would save only 2 of 19 losers.
+
+### Target Model Simulation
+
+| Target Model | Trades Hit | WR% | Est Net PnL |
+|-------------|-----------|-----|-------------|
+| 30pt fixed | 15/31 | 48% | -$5,693 |
+| 50pt fixed | 12/31 | 38% | -$2,565 |
+| 75pt fixed | 8/31 | 25% | $398 |
+| **POC target (below-POC only)** | **10/17** | **58%** | **$9,089** |
+| POC filter + 30pt tgt | 11/17 | 64% | $3,605 |
+| POC filter + 50pt tgt | 9/17 | 52% | $6,467 |
+
+**POC target** for below-POC entries is the natural mean-reversion target — price accepted into VA below POC, target the POC level. Estimated $9,089 net vs current $350.
+
+### 80P SHORT Comparison
+
+80P SHORT: **23 trades, 60.9% WR, PF 6.63, $25,496 net**
+- Avg entry vs POC: +36.5 pts (naturally above POC for shorts)
+- Trend Down: 66.7% WR, $19,176 (best context)
+- Neutral Range: 70.0% WR, $8,232 (works well SHORT!)
+- P-Day Down: 0% WR, -$2,352 (3 trades — consider blocking)
+
+### Available Entry Models (11 registered)
+
+| Model | Best For |
+|-------|----------|
+| `orderflow_cvd` | CVD divergence confirmation |
+| `tpo_rejection` | Rejection from IB/VA edges |
+| `liquidity_sweep` | Stop hunt reversal |
+| `smt_divergence` | ES vs NQ divergence |
+| `bpr` | Balanced price range entry |
+| `double_top` | Double top/bottom pattern |
+| `trendline_backside` | Breakout retest |
+| `tick_divergence` | $TICK divergence |
+
+For 80P LONG, the most relevant alternatives are:
+1. **`tpo_rejection`** — entry on TPO rejection from VA edge (more precise than 30-min acceptance)
+2. **`bpr`** — balanced price range within VA (confirms value acceptance)
+3. **`tick_divergence`** — $TICK divergence confirms rotational buying
+
+### Recommended Changes
+
+1. **Filter: Entry <= POC** for 80P LONG — immediate PF improvement 1.02 to 3.48
+2. **Block non-B/p TPO shapes** for 80P LONG — removes 6 trades at 0% WR
+3. **Consider POC target model** instead of 2R for LONG entries below POC
+4. **Block P-Day Down** for 80P SHORT — removes 3 trades at 0% WR
+5. **Test `tpo_rejection` entry model** — may catch entries earlier at VAL with better precision
+
+---
+
+## 9. Next Steps
+
+1. **Implement 80P LONG quality filter** — entry <= POC + B/p_shape TPO gate
+2. **Test POC target model** for 80P LONG (requires backtest re-run)
+3. **Decide filter config for production** — Bias only (B) vs Full combo (C) vs Combo+Regime (D)
+4. **Fix NWOG** — wider stop or trailing exit, or re-study with different parameters
+5. **Study NDOG (daily gap)** — may overlap with B-Day, needs validation
+6. **Agent framework** — integrate DuckDB observations into agentic trade assessment
+7. **Re-optimize disabled strategies** — See [strategy expansion roadmap](../brainstorm/12-strategy-expansion-roadmap.md)
