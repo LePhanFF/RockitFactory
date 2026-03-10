@@ -1,30 +1,54 @@
 """
-Agent Pipeline — chains Gate → Observers → Orchestrator.
+Agent Pipeline — chains Gate → Observers → [Debate] → Orchestrator.
 
 Same code runs inline (backtest, fast) and via HTTP (FastAPI wrapper).
+Debate layer is OPTIONAL — if disabled or LLM unreachable, falls back to deterministic.
 """
 
 from __future__ import annotations
 
-from rockit_core.agents.evidence import AgentDecision
+import logging
+
+from rockit_core.agents.evidence import AgentDecision, DebateResult
 from rockit_core.agents.gate import CRIGateAgent
+from rockit_core.agents.llm_client import OllamaClient
 from rockit_core.agents.observers.momentum import MomentumObserver
 from rockit_core.agents.observers.profile import ProfileObserver
 from rockit_core.agents.orchestrator import DeterministicOrchestrator
 
+logger = logging.getLogger(__name__)
+
 
 class AgentPipeline:
-    """Chains gate → observers → orchestrator into a single evaluate_signal() call."""
+    """Chains gate → observers → [debate] → orchestrator into a single evaluate_signal() call."""
 
     def __init__(
         self,
         gate: CRIGateAgent | None = None,
         observers: list | None = None,
         orchestrator: DeterministicOrchestrator | None = None,
+        llm_client: OllamaClient | None = None,
+        enable_debate: bool = False,
     ):
         self.gate = gate or CRIGateAgent()
         self.observers = observers or [ProfileObserver(), MomentumObserver()]
         self.orchestrator = orchestrator or DeterministicOrchestrator()
+        self.llm_client = llm_client
+        self.enable_debate = enable_debate and llm_client is not None
+
+        # Lazy-init debate agents only when needed
+        self._advocate = None
+        self._skeptic = None
+        if self.enable_debate:
+            self._init_debate_agents()
+
+    def _init_debate_agents(self) -> None:
+        """Initialize Advocate and Skeptic agents."""
+        from rockit_core.agents.debate.advocate import AdvocateAgent
+        from rockit_core.agents.debate.skeptic import SkepticAgent
+
+        self._advocate = AdvocateAgent(self.llm_client)
+        self._skeptic = SkepticAgent(self.llm_client)
 
     def evaluate_signal(
         self,
@@ -53,8 +77,162 @@ class AgentPipeline:
             for obs in self.observers:
                 all_cards.extend(obs.evaluate(context))
 
-        # 3. Orchestrator decision
+        # 3. Debate (optional — between observers and orchestrator)
+        if self.enable_debate and gate_passed and len(all_cards) > 1:
+            try:
+                advocate_result, skeptic_result = self._run_debate(
+                    all_cards, signal_dict, session_context or {}
+                )
+                # Add instinct cards from debate to the card pool
+                all_cards.extend(advocate_result.instinct_cards)
+                all_cards.extend(skeptic_result.instinct_cards)
+
+                return self.orchestrator.decide_with_debate(
+                    signal_dict, all_cards, gate_passed,
+                    advocate_result, skeptic_result,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("Debate failed, falling back to deterministic", exc_info=True)
+
+        # 4. Orchestrator decision (deterministic fallback)
         return self.orchestrator.decide(signal_dict, all_cards, gate_passed)
+
+    def _run_debate(
+        self,
+        evidence_cards: list,
+        signal_dict: dict,
+        session_context: dict,
+    ) -> tuple[DebateResult, DebateResult]:
+        """Run Advocate then Skeptic debate (sequential — Skeptic needs Advocate's thesis)."""
+        # Enrich context with DuckDB historical stats if available
+        historical = self._query_historical(signal_dict, session_context)
+
+        debate_context = {
+            "evidence_cards": evidence_cards,
+            "signal": signal_dict,
+            "session_context": session_context,
+            "historical": historical,
+        }
+
+        # Advocate builds the case
+        advocate_result = self._advocate.debate(debate_context)
+        logger.debug(
+            "Advocate: direction=%s confidence=%.2f instinct_cards=%d",
+            advocate_result.direction, advocate_result.confidence,
+            len(advocate_result.instinct_cards),
+        )
+
+        # Skeptic challenges (sees Advocate's argument)
+        debate_context["advocate_result"] = advocate_result
+        skeptic_result = self._skeptic.debate(debate_context)
+        logger.debug(
+            "Skeptic: direction=%s confidence=%.2f warnings=%d",
+            skeptic_result.direction, skeptic_result.confidence,
+            len(skeptic_result.warnings),
+        )
+
+        return advocate_result, skeptic_result
+
+    @staticmethod
+    def _query_historical(signal_dict: dict, session_context: dict) -> dict:
+        """Query DuckDB for historical strategy stats under similar conditions.
+
+        Returns dict with strategy-level and condition-level stats, or empty dict on failure.
+        """
+        try:
+            from rockit_core.research.db import connect as db_connect, query as db_query
+        except ImportError:
+            return {}
+
+        strategy = signal_dict.get("strategy_name", "")
+        direction = signal_dict.get("direction", "")
+        day_type = session_context.get("day_type", "")
+
+        if not strategy:
+            return {}
+
+        try:
+            conn = db_connect()
+            result: dict = {}
+
+            # 1. Overall strategy stats
+            rows = db_query(
+                conn,
+                """
+                SELECT COUNT(*) AS n,
+                       ROUND(100.0 * SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) / COUNT(*), 1) AS wr,
+                       ROUND(SUM(CASE WHEN net_pnl > 0 THEN net_pnl ELSE 0 END) /
+                             NULLIF(ABS(SUM(CASE WHEN net_pnl <= 0 THEN net_pnl ELSE 0 END)), 0), 2) AS pf,
+                       ROUND(AVG(net_pnl), 2) AS avg_pnl
+                FROM trades WHERE strategy_name = ?
+                """,
+                [strategy],
+            )
+            if rows and rows[0][0]:
+                result["strategy_overall"] = {
+                    "trades": rows[0][0], "win_rate": rows[0][1],
+                    "profit_factor": rows[0][2], "avg_pnl": rows[0][3],
+                }
+
+            # 2. Strategy + direction combo
+            if direction:
+                rows = db_query(
+                    conn,
+                    """
+                    SELECT COUNT(*) AS n,
+                           ROUND(100.0 * SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) / COUNT(*), 1) AS wr,
+                           ROUND(AVG(net_pnl), 2) AS avg_pnl
+                    FROM trades WHERE strategy_name = ? AND direction = ?
+                    """,
+                    [strategy, direction],
+                )
+                if rows and rows[0][0]:
+                    result["strategy_direction"] = {
+                        "trades": rows[0][0], "win_rate": rows[0][1],
+                        "avg_pnl": rows[0][2], "direction": direction,
+                    }
+
+            # 3. Strategy + day_type combo
+            if day_type:
+                rows = db_query(
+                    conn,
+                    """
+                    SELECT COUNT(*) AS n,
+                           ROUND(100.0 * SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) / COUNT(*), 1) AS wr,
+                           ROUND(AVG(net_pnl), 2) AS avg_pnl
+                    FROM trades WHERE strategy_name = ? AND day_type = ?
+                    """,
+                    [strategy, day_type],
+                )
+                if rows and rows[0][0]:
+                    result["strategy_day_type"] = {
+                        "trades": rows[0][0], "win_rate": rows[0][1],
+                        "avg_pnl": rows[0][2], "day_type": day_type,
+                    }
+
+            # 4. Recent observations for this strategy (last 5)
+            rows = db_query(
+                conn,
+                """
+                SELECT observation, evidence, confidence
+                FROM observations
+                WHERE strategy = ? OR scope = 'portfolio'
+                ORDER BY created_at DESC LIMIT 5
+                """,
+                [strategy],
+            )
+            if rows:
+                result["observations"] = [
+                    {"observation": r[0], "evidence": r[1], "confidence": r[2]}
+                    for r in rows
+                ]
+
+            conn.close()
+            return result
+
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("DuckDB historical query failed: %s", exc)
+            return {}
 
     def _build_context(
         self,

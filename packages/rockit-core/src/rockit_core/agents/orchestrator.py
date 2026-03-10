@@ -1,13 +1,19 @@
 """
 Deterministic Orchestrator — scores evidence cards and makes TAKE/SKIP/REDUCE_SIZE decisions.
 
-MVP: Rule-based scoring with layer weights. No LLM debate.
-All certainty-layer cards admitted by default.
+Supports two modes:
+  1. decide()            — deterministic-only (all cards admitted, fast)
+  2. decide_with_debate() — LLM debate resolves disputed cards, adds instinct
 """
 
 from __future__ import annotations
 
-from rockit_core.agents.evidence import AgentDecision, ConfluenceResult, EvidenceCard
+from rockit_core.agents.evidence import (
+    AgentDecision,
+    ConfluenceResult,
+    DebateResult,
+    EvidenceCard,
+)
 
 # Layer weights for scoring
 LAYER_WEIGHTS = {
@@ -84,6 +90,193 @@ class DeterministicOrchestrator:
             gate_passed=True,
             evidence_cards=evidence_cards,
         )
+
+    def decide_with_debate(
+        self,
+        signal_dict: dict,
+        evidence_cards: list[EvidenceCard],
+        gate_passed: bool,
+        advocate_result: DebateResult,
+        skeptic_result: DebateResult,
+    ) -> AgentDecision:
+        """Score evidence with debate-informed card admission.
+
+        1. Resolve disputed cards (both agree = done, disputed = 0.7× weight).
+        2. Add instinct cards from both sides (weight 0.6).
+        3. Recompute confluence with admitted-only cards.
+        4. Include debate reasoning in decision.
+        """
+        signal_dir = signal_dict.get("direction", "").upper()
+
+        if not gate_passed:
+            confluence = self._build_confluence(evidence_cards, signal_dir)
+            return AgentDecision(
+                decision="SKIP",
+                confidence=1.0,
+                direction=None,
+                confluence=confluence,
+                reasoning="CRI gate: STAND_DOWN — signal blocked",
+                gate_passed=False,
+                evidence_cards=evidence_cards,
+            )
+
+        # 1. Resolve card admission disputes
+        admitted_cards = self._resolve_disputes(
+            evidence_cards, advocate_result, skeptic_result
+        )
+
+        # 2. Add instinct cards from debate (already in evidence_cards list from pipeline)
+        # Mark debate instinct cards as admitted
+        for card in evidence_cards:
+            if card.source in ("debate_advocate", "debate_skeptic"):
+                card.admitted = True
+
+        # 3. Score confluence (admitted cards only)
+        confluence = self._build_confluence_admitted(evidence_cards, signal_dir)
+
+        # 4. Make decision
+        decision, base_reasoning = self._apply_rules(confluence, signal_dir)
+
+        # Enrich reasoning with debate context
+        debate_reasoning = self._debate_reasoning(
+            advocate_result, skeptic_result, decision
+        )
+
+        return AgentDecision(
+            decision=decision,
+            confidence=confluence.conviction,
+            direction=confluence.direction if confluence.direction != "neutral" else None,
+            confluence=confluence,
+            reasoning=f"{base_reasoning} | Debate: {debate_reasoning}",
+            gate_passed=True,
+            evidence_cards=evidence_cards,
+        )
+
+    def _resolve_disputes(
+        self,
+        evidence_cards: list[EvidenceCard],
+        advocate_result: DebateResult,
+        skeptic_result: DebateResult,
+    ) -> list[EvidenceCard]:
+        """Resolve card admission between Advocate and Skeptic.
+
+        Rules:
+          - Both admit → admitted (full weight)
+          - Both reject → rejected
+          - Advocate admits, Skeptic rejects → admitted at 0.7× strength
+          - Advocate rejects, Skeptic admits → admitted at 0.7× strength
+          - Not mentioned by either → admitted (default)
+        """
+        adv_admit = set(advocate_result.admit)
+        adv_reject = set(advocate_result.reject)
+        skp_admit = set(skeptic_result.admit)
+        skp_reject = set(skeptic_result.reject)
+
+        admitted: list[EvidenceCard] = []
+        for card in evidence_cards:
+            if card.source == "gate_cri":
+                card.admitted = True
+                admitted.append(card)
+                continue
+            if card.source in ("debate_advocate", "debate_skeptic"):
+                # Instinct cards from debate — always admitted
+                card.admitted = True
+                admitted.append(card)
+                continue
+
+            cid = card.card_id
+
+            # Both agree to reject
+            if cid in adv_reject and cid in skp_reject:
+                card.admitted = False
+                continue
+
+            # Both agree to admit
+            if cid in adv_admit and cid in skp_admit:
+                card.admitted = True
+                admitted.append(card)
+                continue
+
+            # Disputed: one admits, the other rejects → admit at 0.7× weight
+            if (cid in adv_admit and cid in skp_reject) or (
+                cid in adv_reject and cid in skp_admit
+            ):
+                card.admitted = True
+                card.strength = card.strength * 0.7  # Reduce disputed card weight
+                admitted.append(card)
+                continue
+
+            # Not mentioned by either → admit by default
+            card.admitted = True
+            admitted.append(card)
+
+        return admitted
+
+    def _build_confluence_admitted(
+        self, cards: list[EvidenceCard], signal_dir: str
+    ) -> ConfluenceResult:
+        """Aggregate only admitted evidence cards."""
+        bull_score = 0.0
+        bear_score = 0.0
+        bull_count = 0
+        bear_count = 0
+        rejected = 0
+
+        for card in cards:
+            if card.source == "gate_cri":
+                continue
+
+            if card.admitted is False:
+                rejected += 1
+                continue
+
+            weight = self.layer_weights.get(card.layer, 0.5)
+            weighted = card.strength * weight
+
+            if card.direction == "bullish":
+                bull_score += weighted
+                bull_count += 1
+            elif card.direction == "bearish":
+                bear_score += weighted
+                bear_count += 1
+
+        total = bull_score + bear_score
+        conviction = abs(bull_score - bear_score) / total if total > 0 else 0.0
+
+        if bull_score > bear_score:
+            direction = "bullish"
+        elif bear_score > bull_score:
+            direction = "bearish"
+        else:
+            direction = "neutral"
+
+        return ConfluenceResult(
+            direction=direction,
+            conviction=conviction,
+            bull_score=round(bull_score, 4),
+            bear_score=round(bear_score, 4),
+            bull_cards=bull_count,
+            bear_cards=bear_count,
+            total_evidence=len(cards),
+            total_rejected=rejected,
+            cards=cards,
+        )
+
+    @staticmethod
+    def _debate_reasoning(
+        advocate_result: DebateResult,
+        skeptic_result: DebateResult,
+        decision: str,
+    ) -> str:
+        """Summarize debate outcome for the reasoning field."""
+        parts = []
+        if advocate_result.thesis:
+            parts.append(f"Advocate ({advocate_result.direction}, {advocate_result.confidence:.0%}): {advocate_result.thesis[:80]}")
+        if skeptic_result.thesis:
+            parts.append(f"Skeptic ({skeptic_result.direction}, {skeptic_result.confidence:.0%}): {skeptic_result.thesis[:80]}")
+        if skeptic_result.warnings:
+            parts.append(f"Warnings: {', '.join(skeptic_result.warnings[:3])}")
+        return " | ".join(parts) if parts else "No debate reasoning"
 
     def _build_confluence(
         self, cards: list[EvidenceCard], signal_dir: str

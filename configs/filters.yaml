@@ -26,3 +26,9 @@ pipeline:
     enabled: false  # Enable via A/B test script, not by default
     take_threshold: 0.3
     skip_threshold: 0.1
+    llm_debate:
+      enabled: false          # Toggle LLM debate separately from deterministic agents
+      endpoint: "http://spark-ai:11434/v1"
+      model: "qwen3.5:35b-a3b"
+      timeout: 30
+      max_tokens: 8000

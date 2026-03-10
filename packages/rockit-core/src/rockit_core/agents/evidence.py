@@ -1,9 +1,10 @@
 """
 Evidence dataclasses for the agent framework.
 
-EvidenceCard  — single observation from an agent
+EvidenceCard    — single observation from an agent
 ConfluenceResult — aggregated bull/bear scoring
-AgentDecision — final TAKE/SKIP/REDUCE_SIZE decision
+AgentDecision   — final TAKE/SKIP/REDUCE_SIZE decision
+DebateResult    — output from Advocate or Skeptic LLM agent
 """
 
 from __future__ import annotations
@@ -89,4 +90,45 @@ class AgentDecision:
                 }
                 for c in self.evidence_cards
             ],
+        }
+
+
+@dataclass
+class DebateResult:
+    """Output from an Advocate or Skeptic LLM agent."""
+
+    agent: str  # "advocate" or "skeptic"
+    admit: list[str] = field(default_factory=list)  # card_ids to admit
+    reject: list[str] = field(default_factory=list)  # card_ids to reject
+    instinct_cards: list[EvidenceCard] = field(default_factory=list)  # new LLM-generated cards
+    thesis: str = ""  # one-paragraph argument
+    direction: str = "neutral"  # "bullish" / "bearish" / "neutral"
+    confidence: float = 0.5  # 0.0-1.0
+    warnings: list[str] = field(default_factory=list)  # risk flags (skeptic-only)
+    raw_response: str = ""  # full LLM response for debugging
+
+    def __post_init__(self) -> None:
+        if self.direction not in ("bullish", "bearish", "neutral"):
+            self.direction = "neutral"
+        self.confidence = max(0.0, min(1.0, self.confidence))
+
+    def to_dict(self) -> dict:
+        """Serialize for JSON/DuckDB storage."""
+        return {
+            "agent": self.agent,
+            "admit": self.admit,
+            "reject": self.reject,
+            "instinct_cards": [
+                {
+                    "card_id": c.card_id,
+                    "observation": c.observation,
+                    "direction": c.direction,
+                    "strength": c.strength,
+                }
+                for c in self.instinct_cards
+            ],
+            "thesis": self.thesis,
+            "direction": self.direction,
+            "confidence": self.confidence,
+            "warnings": self.warnings,
         }

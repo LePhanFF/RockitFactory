@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-A/B test agents vs mechanical filters — runs 4 backtests.
+A/B test agents vs mechanical filters — runs 4-5 backtests.
 
 Runs:
   A: No filters (baseline)
   B: Mechanical filters only (bias + day_type_gate + anti_chase)
   C: Mechanical + Agent filter
   D: Agent filter only
+  E: Mechanical + Agent + LLM debate (--enable-debate)
 
 Also persists agent decisions to DuckDB and backfills actual outcomes.
 
@@ -14,6 +15,7 @@ Usage:
     python scripts/ab_test_agents.py
     python scripts/ab_test_agents.py --no-merge
     python scripts/ab_test_agents.py --instrument ES
+    python scripts/ab_test_agents.py --no-merge --enable-debate
 """
 
 import argparse
@@ -29,6 +31,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root / "packages" / "rockit-core" / "src"))
 
 from rockit_core.agents.agent_filter import AgentFilter
+from rockit_core.agents.llm_client import OllamaClient
 from rockit_core.agents.orchestrator import DeterministicOrchestrator
 from rockit_core.agents.pipeline import AgentPipeline
 from rockit_core.config.instruments import get_instrument
@@ -122,13 +125,33 @@ def get_mechanical_filters():
     ]
 
 
-def get_agent_filter():
-    """Build the agent filter with default pipeline."""
+def get_agent_filter(enable_debate=False):
+    """Build the agent filter with default pipeline.
+
+    Args:
+        enable_debate: If True, enables LLM Advocate/Skeptic debate layer.
+    """
     orchestrator = DeterministicOrchestrator(
         take_threshold=0.3,
         skip_threshold=0.1,
     )
-    pipeline = AgentPipeline(orchestrator=orchestrator)
+
+    llm_client = None
+    if enable_debate:
+        llm_client = OllamaClient(
+            base_url="http://spark-ai:11434/v1",
+            model="qwen3.5:35b-a3b",
+            timeout=30,
+        )
+        if not llm_client.is_available():
+            print("WARNING: LLM endpoint not reachable — debate will be disabled")
+            llm_client = None
+
+    pipeline = AgentPipeline(
+        orchestrator=orchestrator,
+        llm_client=llm_client,
+        enable_debate=enable_debate,
+    )
     return AgentFilter(pipeline=pipeline)
 
 
@@ -237,6 +260,10 @@ def main():
     parser = argparse.ArgumentParser(description="A/B test agents vs mechanical filters")
     parser.add_argument("--no-merge", action="store_true")
     parser.add_argument("--instrument", default="NQ")
+    parser.add_argument("--enable-debate", action="store_true",
+                        help="Add Run E with LLM Advocate/Skeptic debate (~30s/signal)")
+    parser.add_argument("--debate-only", action="store_true",
+                        help="Only run E (LLM debate), skip A-D")
     args = parser.parse_args()
 
     instrument = args.instrument.upper()
@@ -269,12 +296,24 @@ def main():
     agent_c = get_agent_filter()
     agent_d = get_agent_filter()
 
-    configs = {
-        "A: No filters (baseline)": None,
-        "B: Mechanical only": CompositeFilter(mechanical),
-        "C: Mechanical + Agent": CompositeFilter(get_mechanical_filters() + [agent_c]),
-        "D: Agent only": CompositeFilter([agent_d]),
-    }
+    if args.debate_only:
+        agent_e = get_agent_filter(enable_debate=True)
+        configs = {
+            "E: Mech + Agent + LLM Debate": CompositeFilter(get_mechanical_filters() + [agent_e]),
+        }
+    else:
+        configs = {
+            "A: No filters (baseline)": None,
+            "B: Mechanical only": CompositeFilter(mechanical),
+            "C: Mechanical + Agent": CompositeFilter(get_mechanical_filters() + [agent_c]),
+            "D: Agent only": CompositeFilter([agent_d]),
+        }
+
+        if args.enable_debate:
+            agent_e = get_agent_filter(enable_debate=True)
+            configs["E: Mech + Agent + LLM Debate"] = CompositeFilter(
+                get_mechanical_filters() + [agent_e]
+            )
 
     results = {}
     for label, filters in configs.items():
@@ -283,9 +322,14 @@ def main():
         )
         results[label] = summary
 
-        # Persist agent decisions for runs C and D
-        if "Agent" in label:
-            af = agent_c if "C:" in label else agent_d
+        # Persist agent decisions for runs C, D, E
+        if "Agent" in label or "Debate" in label:
+            if "E:" in label:
+                af = agent_e
+            elif "C:" in label:
+                af = agent_c
+            else:
+                af = agent_d
             n = persist_agent_decisions_with_outcomes(conn, af, run_id, result)
             if n:
                 print(f"  Agent decisions persisted: {n}")
