@@ -355,11 +355,25 @@ def main():
         print(f"  - {s.name}")
     print()
 
+    # --- Load session bias from DuckDB (if available) ---
+    session_bias_lookup = {}
+    try:
+        from rockit_core.research.db import connect as _db_connect, query as _db_query
+        _conn = _db_connect()
+        rows = _db_query(_conn, "SELECT session_date, bias FROM session_context WHERE bias IS NOT NULL")
+        session_bias_lookup = {str(row[0]).split(" ")[0]: row[1] for row in rows}
+        _conn.close()
+        if session_bias_lookup:
+            print(f"Loaded session bias for {len(session_bias_lookup)} sessions from DuckDB")
+    except Exception as e:
+        print(f"Note: Could not load session bias from DuckDB: {e}")
+
     # --- Run backtest ---
     inst_spec = get_instrument(instrument)
     engine = BacktestEngine(
         instrument=inst_spec,
         strategies=strategies,
+        session_bias_lookup=session_bias_lookup,
     )
 
     result = engine.run(df, verbose=True)
@@ -383,8 +397,22 @@ def main():
         from rockit_core.research.db import connect as db_connect, persist_backtest_from_result
         db_conn = db_connect()
         strategy_names = [s.name for s in strategies]
+
+        # Build full config dict for reproducibility
+        sessions_list = sorted(df['session_date'].unique())
+        first_date = str(sessions_list[0]) if sessions_list else "?"
+        last_date = str(sessions_list[-1]) if sessions_list else "?"
+        run_config = {
+            "strategies": {s.name: {"enabled": True} for s in strategies},
+            "instrument": instrument,
+            "session_count": len(sessions_list),
+            "date_range": f"{first_date} to {last_date}",
+            "bias_sessions_loaded": len(session_bias_lookup),
+        }
+
         run_id = persist_backtest_from_result(
             db_conn, result, instrument, summary, strategy_names,
+            config=run_config,
         )
         db_conn.close()
         print(f"Persisted to research DB (run_id: {run_id})")

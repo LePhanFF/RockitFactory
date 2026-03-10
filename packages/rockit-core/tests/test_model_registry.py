@@ -24,8 +24,8 @@ def test_entry_models_count():
 
 
 def test_stop_models_count():
-    """All stop models are registered (4 original + 11 new + 2 VA edge)."""
-    assert len(STOP_MODEL_FACTORIES) == 17
+    """All stop models are registered (4 original + 11 new + 2 VA edge + 2 NWOG)."""
+    assert len(STOP_MODEL_FACTORIES) == 19
 
 
 def test_target_models_count():
@@ -48,6 +48,7 @@ def test_stop_model_keys():
         "1_atr", "2_atr", "lvn_hvn", "ifvg",
         "level_buffer_10pct", "level_buffer_20pct", "level_buffer_30pct",
         "fixed_10pts", "fixed_15pts", "fixed_20pts", "fixed_30pts",
+        "fixed_60pts", "fixed_75pts",
         "ib_edge_10pct", "ib_edge_20pct",
         "structural_vwap_40pct", "structural_ema20_40pct",
         "va_edge_10pts", "va_edge_5pts",

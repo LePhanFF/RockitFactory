@@ -65,6 +65,8 @@ STOP_MODEL_FACTORIES: dict[str, type[StopModel] | callable] = {
     "fixed_15pts": lambda: FixedPointsStop(15.0),
     "fixed_20pts": lambda: FixedPointsStop(20.0),
     "fixed_30pts": lambda: FixedPointsStop(30.0),
+    "fixed_60pts": lambda: FixedPointsStop(60.0),
+    "fixed_75pts": lambda: FixedPointsStop(75.0),
     "ib_edge_10pct": lambda: IBEdgeStop(0.1),
     "ib_edge_20pct": lambda: IBEdgeStop(0.2),
     "structural_vwap_40pct": lambda: StructuralStop('vwap', 0.4),

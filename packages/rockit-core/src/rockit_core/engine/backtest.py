@@ -76,6 +76,7 @@ class BacktestEngine:
         position_mgr: Optional[PositionManager] = None,
         risk_per_trade: float = DEFAULT_MAX_RISK_PER_TRADE,
         max_contracts: int = DEFAULT_MAX_CONTRACTS,
+        session_bias_lookup: Optional[Dict[str, str]] = None,
     ):
         self.instrument = instrument
         self.strategies = strategies
@@ -84,6 +85,7 @@ class BacktestEngine:
         self.position_mgr = position_mgr or PositionManager()
         self.risk_per_trade = risk_per_trade
         self.max_contracts = max_contracts
+        self.session_bias_lookup = session_bias_lookup or {}
 
     def run(self, df: pd.DataFrame, verbose: bool = True) -> BacktestResult:
         """Run the backtest on the provided DataFrame."""
@@ -292,6 +294,15 @@ class BacktestEngine:
             else:
                 session_context['prior_session_bullish'] = None
 
+        # Inject precomputed session bias from deterministic tape (if available)
+        # Normalize session key — session_str may be '2025-02-20 00:00:00' or '2025-02-20'
+        bias_key = session_str.split(" ")[0].split("T")[0]
+        session_context['session_bias'] = self.session_bias_lookup.get(bias_key, 'NEUTRAL')
+
+        # Compute real-time regime_bias from available indicators (3-vote system)
+        regime_bias = self._compute_regime_bias(session_context)
+        session_context['regime_bias'] = regime_bias
+
         # --- Phase 3a2: Store RTH bars + prior day context for TPO snapshot ---
         self._current_rth_df = rth_df
         self._prior_day_for_tpo = {
@@ -359,6 +370,9 @@ class BacktestEngine:
             # Update VWAP if available
             if 'vwap' in bar.index:
                 session_context['vwap'] = bar['vwap']
+
+            # Refresh regime_bias per bar (uses current price + VWAP)
+            session_context['regime_bias'] = self._compute_regime_bias(session_context)
 
             # 5a2: Update day type confidence scorer
             day_confidence = confidence_scorer.update(bar, bar_idx)
@@ -438,6 +452,50 @@ class BacktestEngine:
         # --- Phase 7: Notify strategies ---
         for strategy in active_strategies:
             strategy.on_session_end(session_str)
+
+    @staticmethod
+    def _compute_regime_bias(ctx: dict) -> str:
+        """Compute regime bias from available indicators (3-vote system).
+
+        Votes:
+          - EMA20 vs EMA50 (2x weight): BULL if ema20 > ema50
+          - Prior session bullish (1x): BULL if prior close > prior VWAP
+          - Price vs VWAP (1x): BULL if current price > VWAP
+        Returns: 'BULL', 'BEAR', or 'NEUTRAL'
+        """
+        bull_votes = 0
+        bear_votes = 0
+
+        ema20 = ctx.get('ema20')
+        ema50 = ctx.get('ema50')
+        if ema20 is not None and ema50 is not None:
+            if not (isinstance(ema20, float) and np.isnan(ema20)) and \
+               not (isinstance(ema50, float) and np.isnan(ema50)):
+                if ema20 > ema50:
+                    bull_votes += 2
+                elif ema50 > ema20:
+                    bear_votes += 2
+
+        prior_bullish = ctx.get('prior_session_bullish')
+        if prior_bullish is True:
+            bull_votes += 1
+        elif prior_bullish is False:
+            bear_votes += 1
+
+        price = ctx.get('current_price')
+        vwap = ctx.get('vwap')
+        if price is not None and vwap is not None:
+            if not (isinstance(vwap, float) and np.isnan(vwap)):
+                if price > vwap:
+                    bull_votes += 1
+                elif price < vwap:
+                    bear_votes += 1
+
+        if bull_votes > bear_votes:
+            return 'BULL'
+        elif bear_votes > bull_votes:
+            return 'BEAR'
+        return 'NEUTRAL'
 
     def _manage_positions(
         self, bar: pd.Series, timestamp, session_str: str, bar_time,

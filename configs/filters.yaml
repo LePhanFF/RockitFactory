@@ -1,0 +1,23 @@
+# Filter pipeline configuration
+# Each filter is a generic type parameterized by rules.
+# To add/modify rules, edit this YAML — no code changes needed.
+
+pipeline:
+  bias_alignment:
+    enabled: true
+    neutral_passes: true  # neutral/flat bias = no filter (pass through)
+
+  day_type_gate:
+    enabled: true
+    rules:
+      - strategy: "80P Rule"
+        blocked_day_types: [neutral, neutral_range, "Neutral Range"]
+      - strategy: "B-Day"
+        blocked_day_types: [trend_up, trend_down, "Trend Up", "Trend Down"]
+
+  anti_chase:
+    enabled: true
+    rules:
+      - strategy: "80P Rule"
+        block_long_when_bias: [Bullish, BULL, "Very Bullish"]
+        block_short_when_bias: [Bearish, BEAR, "Very Bearish"]

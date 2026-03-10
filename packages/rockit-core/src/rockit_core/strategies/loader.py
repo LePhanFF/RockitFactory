@@ -39,6 +39,7 @@ _CONFIG_KEY_TO_MODULE: dict[str, tuple[str, str]] = {
     "or_reversal": ("rockit_core.strategies.or_reversal", "OpeningRangeReversal"),
     "or_acceptance": ("rockit_core.strategies.or_acceptance", "ORAcceptanceStrategy"),
     "twenty_percent_rule": ("rockit_core.strategies.twenty_percent_rule", "TwentyPercentRule"),
+    "nwog_gap_fill": ("rockit_core.strategies.nwog_gap_fill", "NWOGGapFill"),
 }
 
 
@@ -80,6 +81,7 @@ CORE_STRATEGIES = [
 RESEARCH_STRATEGIES = [
     "neutral_day", "pm_morph", "morph_to_trend",
     "orb_vwap_breakout", "ema_trend_follow", "liquidity_sweep",
+    "nwog_gap_fill",
 ]
 
 

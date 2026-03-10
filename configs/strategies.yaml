@@ -112,3 +112,9 @@ research_strategies:
     description: "Liquidity Sweep — trap inversion entries with delta confluence"
     day_types: [BDay, Neutral]
     direction: both
+
+  nwog_gap_fill:
+    enabled: false
+    description: "NWOG Gap Fill — Monday weekly gap fill with VWAP + acceptance filters"
+    day_types: [all]
+    direction: both

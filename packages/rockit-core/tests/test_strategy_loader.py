@@ -19,7 +19,7 @@ from rockit_core.strategies.loader import (
 
 def test_registry_loads_all_strategies():
     classes = get_all_strategy_classes()
-    assert len(classes) == 18
+    assert len(classes) == 19
 
 
 def test_registry_keys_match_config_keys():
@@ -141,7 +141,7 @@ def test_load_core_strategies_from_config():
 
 
 def test_load_all_strategies_from_custom_config():
-    """When all strategies are enabled, all 18 load."""
+    """When all strategies are enabled, all 19 load."""
     config = {
         'core_strategies': {key: {'enabled': True} for key in CORE_STRATEGIES},
         'research_strategies': {key: {'enabled': True} for key in RESEARCH_STRATEGIES},
@@ -149,7 +149,7 @@ def test_load_all_strategies_from_custom_config():
     path = _write_yaml_config(config)
     try:
         strategies = load_strategies_from_config(path)
-        assert len(strategies) == 18
+        assert len(strategies) == 19
     finally:
         os.unlink(path)
 

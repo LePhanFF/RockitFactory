@@ -24,6 +24,21 @@ from rockit_core.research.schema import TABLES, create_all_tables
 DEFAULT_DB_PATH = Path("data/research.duckdb")
 
 
+def _json_default(obj: Any) -> Any:
+    """Handle numpy/pandas types for json.dumps."""
+    import numpy as np
+
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    return str(obj)
+
+
 def connect(db_path: Optional[str] = None) -> duckdb.DuckDBPyConnection:
     """Open (or create) the research database. Use ':memory:' for tests."""
     if db_path is None:
@@ -93,9 +108,9 @@ def persist_backtest_run(
             summary.get("avg_win", 0.0),
             summary.get("avg_loss", 0.0),
             summary.get("expectancy", 0.0),
-            json.dumps(list(strategies)),
-            json.dumps(config) if config else None,
-            json.dumps(summary.get("by_strategy", {})),
+            json.dumps(list(strategies), default=_json_default),
+            json.dumps(config, default=_json_default) if config else None,
+            json.dumps(summary.get("by_strategy", {}), default=_json_default),
             git.get("branch"),
             git.get("commit"),
             notes,
@@ -129,9 +144,9 @@ def persist_trades(
         entry_time = _parse_timestamp(t.get("entry_time"))
         exit_time = _parse_timestamp(t.get("exit_time"))
 
-        # Metadata as JSON
+        # Metadata as JSON (handle numpy types)
         meta = t.get("metadata")
-        meta_json = json.dumps(meta) if meta else None
+        meta_json = json.dumps(meta, default=_json_default) if meta else None
 
         conn.execute(
             """
@@ -311,6 +326,69 @@ def table_counts(conn: duckdb.DuckDBPyConnection) -> Dict[str, int]:
         except Exception:
             counts[name] = 0
     return counts
+
+
+def persist_assessment(
+    conn: duckdb.DuckDBPyConnection,
+    trade_id: str,
+    run_id: str,
+    assessment: Dict[str, Any],
+) -> None:
+    """UPSERT a trade assessment. Deletes existing + re-inserts."""
+    conn.execute(
+        "DELETE FROM trade_assessments WHERE trade_id = ? AND run_id = ?",
+        [trade_id, run_id],
+    )
+    conn.execute(
+        """
+        INSERT INTO trade_assessments (
+            trade_id, run_id,
+            outcome_quality, why_worked, why_failed,
+            deterministic_support, deterministic_warning,
+            improvement_suggestion, pre_signal_context
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            trade_id,
+            run_id,
+            assessment.get("outcome_quality", ""),
+            assessment.get("why_worked"),
+            assessment.get("why_failed"),
+            assessment.get("deterministic_support"),
+            assessment.get("deterministic_warning"),
+            assessment.get("improvement_suggestion"),
+            json.dumps(assessment["pre_signal_context"], default=_json_default) if assessment.get("pre_signal_context") else None,
+        ],
+    )
+
+
+def persist_observation(
+    conn: duckdb.DuckDBPyConnection,
+    observation: Dict[str, Any],
+) -> None:
+    """Insert an observation record. Deletes existing + re-inserts on conflict."""
+    obs_id = observation.get("obs_id", str(uuid.uuid4())[:12])
+    conn.execute("DELETE FROM observations WHERE obs_id = ?", [obs_id])
+    conn.execute(
+        """
+        INSERT INTO observations (
+            obs_id, scope, strategy, session_date, trade_id, run_id,
+            observation, evidence, source, confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            obs_id,
+            observation.get("scope", "portfolio"),
+            observation.get("strategy"),
+            observation.get("session_date"),
+            observation.get("trade_id"),
+            observation.get("run_id"),
+            observation["observation"],
+            observation.get("evidence"),
+            observation.get("source", "phase4_analysis"),
+            observation.get("confidence", 0.0),
+        ],
+    )
 
 
 def _parse_timestamp(val: Any) -> Any:
