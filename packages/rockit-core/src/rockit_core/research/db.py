@@ -391,6 +391,68 @@ def persist_observation(
     )
 
 
+def persist_agent_decision(
+    conn: duckdb.DuckDBPyConnection,
+    decision_id: str,
+    run_id: str,
+    decision_data: Dict[str, Any],
+) -> None:
+    """Insert an agent decision record. Deletes existing + re-inserts."""
+    conn.execute(
+        "DELETE FROM agent_decisions WHERE decision_id = ?", [decision_id]
+    )
+    evidence_json = json.dumps(
+        decision_data.get("evidence_cards", []), default=_json_default
+    )
+    conn.execute(
+        """
+        INSERT INTO agent_decisions (
+            decision_id, run_id, trade_id, session_date, signal_time,
+            strategy_name, setup_type, signal_direction,
+            decision, confidence, evidence_direction,
+            bull_score, bear_score, conviction,
+            total_evidence, bull_cards, bear_cards,
+            gate_passed, gate_cri_status, reasoning,
+            evidence_cards, actual_outcome, actual_pnl, was_correct
+        ) VALUES (
+            ?, ?, ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?, ?
+        )
+        """,
+        [
+            decision_id,
+            run_id,
+            decision_data.get("trade_id"),
+            decision_data.get("session_date"),
+            decision_data.get("signal_time"),
+            decision_data.get("strategy_name", ""),
+            decision_data.get("setup_type"),
+            decision_data.get("signal_direction"),
+            decision_data.get("decision", ""),
+            decision_data.get("confidence", 0.0),
+            decision_data.get("evidence_direction"),
+            decision_data.get("bull_score", 0.0),
+            decision_data.get("bear_score", 0.0),
+            decision_data.get("conviction", 0.0),
+            decision_data.get("total_evidence", 0),
+            decision_data.get("bull_cards", 0),
+            decision_data.get("bear_cards", 0),
+            decision_data.get("gate_passed", True),
+            decision_data.get("gate_cri_status"),
+            decision_data.get("reasoning"),
+            evidence_json,
+            decision_data.get("actual_outcome"),
+            decision_data.get("actual_pnl"),
+            decision_data.get("was_correct"),
+        ],
+    )
+
+
 def _parse_timestamp(val: Any) -> Any:
     """Parse a timestamp value — pass through datetimes, parse strings."""
     if val is None:

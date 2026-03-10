@@ -8,10 +8,13 @@ Tables:
   deterministic_tape — 5-min time series (flattened key fields + JSON blob)
   observations     — structured findings linked to trades/runs
   trade_assessments — per-trade AI analysis
+  agent_decisions  — per-signal agent pipeline decisions (TAKE/SKIP/REDUCE_SIZE)
 
 Views:
-  v_trade_context  — trades JOIN session_context
-  v_trade_tape     — trades JOIN deterministic_tape at nearest 5-min
+  v_trade_context      — trades JOIN session_context
+  v_trade_tape         — trades JOIN deterministic_tape at nearest 5-min
+  v_agent_accuracy     — agent decision accuracy by strategy + decision type
+  v_agent_vs_mechanical — agent TAKE vs SKIP PnL comparison
 """
 
 import duckdb
@@ -186,6 +189,35 @@ TABLES = {
             PRIMARY KEY (trade_id, run_id)
         )
     """,
+    "agent_decisions": """
+        CREATE TABLE IF NOT EXISTS agent_decisions (
+            decision_id         VARCHAR PRIMARY KEY,
+            run_id              VARCHAR,
+            trade_id            VARCHAR,
+            session_date        VARCHAR,
+            signal_time         VARCHAR,
+            strategy_name       VARCHAR NOT NULL,
+            setup_type          VARCHAR,
+            signal_direction    VARCHAR,
+            decision            VARCHAR NOT NULL,
+            confidence          DOUBLE,
+            evidence_direction  VARCHAR,
+            bull_score          DOUBLE,
+            bear_score          DOUBLE,
+            conviction          DOUBLE,
+            total_evidence      INTEGER,
+            bull_cards          INTEGER,
+            bear_cards          INTEGER,
+            gate_passed         BOOLEAN,
+            gate_cri_status     VARCHAR,
+            reasoning           VARCHAR,
+            evidence_cards      JSON,
+            actual_outcome      VARCHAR,
+            actual_pnl          DOUBLE,
+            was_correct         BOOLEAN,
+            created_at          TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
 }
 
 VIEWS = {
@@ -237,6 +269,41 @@ VIEWS = {
                 ORDER BY dt2.snapshot_time DESC
                 LIMIT 1
             )
+    """,
+    "v_agent_accuracy": """
+        CREATE OR REPLACE VIEW v_agent_accuracy AS
+        SELECT
+            strategy_name,
+            decision,
+            COUNT(*) AS total,
+            SUM(CASE WHEN was_correct THEN 1 ELSE 0 END) AS correct,
+            ROUND(SUM(CASE WHEN was_correct THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1)
+                AS accuracy_pct,
+            ROUND(AVG(confidence), 3) AS avg_confidence,
+            ROUND(AVG(conviction), 3) AS avg_conviction
+        FROM agent_decisions
+        WHERE was_correct IS NOT NULL
+        GROUP BY strategy_name, decision
+    """,
+    "v_agent_vs_mechanical": """
+        CREATE OR REPLACE VIEW v_agent_vs_mechanical AS
+        SELECT
+            ad.strategy_name,
+            COUNT(*) AS agent_decisions,
+            SUM(CASE WHEN ad.decision = 'TAKE' THEN 1 ELSE 0 END) AS takes,
+            SUM(CASE WHEN ad.decision = 'SKIP' THEN 1 ELSE 0 END) AS skips,
+            SUM(CASE WHEN ad.decision = 'REDUCE_SIZE' THEN 1 ELSE 0 END) AS reduces,
+            ROUND(AVG(CASE WHEN ad.decision = 'TAKE' THEN ad.actual_pnl END), 2)
+                AS avg_take_pnl,
+            ROUND(AVG(CASE WHEN ad.decision = 'SKIP' THEN ad.actual_pnl END), 2)
+                AS avg_skip_pnl,
+            ROUND(SUM(CASE WHEN ad.decision = 'SKIP' AND ad.actual_pnl < 0
+                       THEN 1 ELSE 0 END) * 100.0
+                / NULLIF(SUM(CASE WHEN ad.decision = 'SKIP' THEN 1 ELSE 0 END), 0), 1)
+                AS skip_would_have_lost_pct
+        FROM agent_decisions ad
+        WHERE ad.actual_outcome IS NOT NULL
+        GROUP BY ad.strategy_name
     """,
 }
 

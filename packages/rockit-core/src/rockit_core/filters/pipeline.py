@@ -57,4 +57,18 @@ def build_filter_pipeline(
             rules=ac_cfg.get("rules", []),
         ))
 
+    # Agent evaluation
+    agent_cfg = pipeline_cfg.get("agent_evaluation", {})
+    if agent_cfg.get("enabled"):
+        from rockit_core.agents.agent_filter import AgentFilter
+        from rockit_core.agents.orchestrator import DeterministicOrchestrator
+        from rockit_core.agents.pipeline import AgentPipeline
+
+        orchestrator = DeterministicOrchestrator(
+            take_threshold=agent_cfg.get("take_threshold", 0.3),
+            skip_threshold=agent_cfg.get("skip_threshold", 0.1),
+        )
+        pipeline = AgentPipeline(orchestrator=orchestrator)
+        filters.append(AgentFilter(pipeline=pipeline))
+
     return CompositeFilter(filters) if filters else None

@@ -21,3 +21,8 @@ pipeline:
       - strategy: "80P Rule"
         block_long_when_bias: [Bullish, BULL, "Very Bullish"]
         block_short_when_bias: [Bearish, BEAR, "Very Bearish"]
+
+  agent_evaluation:
+    enabled: false  # Enable via A/B test script, not by default
+    take_threshold: 0.3
+    skip_threshold: 0.1
