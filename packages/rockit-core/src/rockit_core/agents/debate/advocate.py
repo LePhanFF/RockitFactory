@@ -35,7 +35,7 @@ def _load_system_prompt() -> str:
 class AdvocateAgent(AgentBase):
     """LLM-powered agent that builds the case for a trade signal."""
 
-    def __init__(self, llm_client: OllamaClient, max_tokens: int = 8000):
+    def __init__(self, llm_client: OllamaClient, max_tokens: int = 4000):
         self._llm = llm_client
         self._max_tokens = max_tokens
         self._system_prompt = _load_system_prompt()
