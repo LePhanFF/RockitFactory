@@ -159,10 +159,53 @@ For maximum risk-adjusted returns: Run D (74.4% WR, PF 5.75, 0.53% DD), but only
 
 ---
 
-## 6. Next Steps
+## 6. Deep Dive: Bias-Filtered Run B (259 trades)
+
+Assessments populated for all 4 A/B runs. Quality progression:
+
+| Run | Strong Wins | Avoidable Losses | Lucky Wins | Normal Losses |
+|-----|-------------|-----------------|------------|---------------|
+| A: Baseline (408) | 154 (37.7%) | **102 (25.0%)** | 71 (17.4%) | 77 (18.9%) |
+| B: Bias only (259) | 154 (59.5%) | **24 (9.3%)** | 0 (0%) | 77 (29.7%) |
+| C: Full combo (206) | 131 (63.6%) | **6 (2.9%)** | 0 (0%) | 68 (33.0%) |
+| D: Combo+Regime (156) | 115 (73.7%) | **3 (1.9%)** | 0 (0%) | 37 (23.7%) |
+
+Bias filter preserved ALL 154 strong wins while eliminating all 71 lucky wins and reducing avoidable losses 102 -> 24.
+
+### LONG vs SHORT Performance (Run B)
+
+| Strategy | LONG WR | LONG Net | SHORT WR | SHORT Net | Finding |
+|----------|---------|---------|----------|----------|---------|
+| **OR Rev** | 76.3% | $35,072 | 76.5% | $19,557 | Balanced — both sides excellent |
+| **80P Rule** | **38.7%** | **$350** | **60.9%** | **$25,496** | LONG side is breakeven! |
+| **OR Accept** | 60.3% | $15,225 | 73.1% | $9,613 | SHORT side 13pp better WR |
+| **20P IB Ext** | 48.1% | $7,581 | 62.5% | $7,222 | SHORT side better but small sample |
+| **B-Day** | 57.7% | $5,767 | — | — | All LONG (balance fade entry) |
+
+**Critical finding**: 80P LONG = 38.7% WR, $350 net. Essentially breakeven. Consider disabling 80P LONG or adding stricter filters.
+
+### Loss Pattern Analysis
+
+1. **93% of normal losses are clean STOP exits** (avg -$522). No blown stops or runaway losses. These are the cost of doing business — valid setups, controlled risk.
+2. **CRI STAND_DOWN at IB close has ZERO discriminating power** — 100% of trades show STAND_DOWN at entry time. CRI fires later in session, NOT useful as IB-close filter.
+3. **Loss clusters are 2-trade max** — no sessions with 3+ losses. Worst single session = -$2,827. Risk management is working.
+4. **LONG trades = 77% of all losses** — 57.8% WR vs SHORT 68.9% WR. Bullish bias (171/270 sessions) + LONG direction = overtrading.
+5. **24 remaining avoidable losses**: 19 from 80P (day_type/anti-chase), 4 from OR Rev (counter-tape), 1 from B-Day (trend day).
+
+### 23 Observations in DuckDB
+
+15 from Phase 4 analysis + 8 new from Phase 5 bias-filtered analysis. All persisted in `observations` table for agent/LLM consumption. Key new observations:
+- `p5_01`: 80P SHORT >> LONG (60.9% vs 38.7% WR)
+- `p5_03`: CRI at IB close = useless (100% STAND_DOWN)
+- `p5_05`: LONG side carries 77% of losses
+- `p5_06`: Bias filter preserves ALL strong wins, removes only bad/lucky trades
+
+---
+
+## 7. Next Steps
 
 1. **Decide filter config for production** — Bias only (B) vs Full combo (C) vs Combo+Regime (D)
-2. **Fix NWOG** — wider stop or trailing exit, or re-study with different parameters
-3. **Study NDOG (daily gap)** — may overlap with B-Day, needs validation
-4. **Re-optimize disabled strategies** — See [strategy expansion roadmap](../brainstorm/12-strategy-expansion-roadmap.md)
-5. **Run assessments on filtered runs** — assess B/C/D trades to validate quality improvement
+2. **Consider disabling 80P LONG** — 38.7% WR is below breakeven after costs
+3. **Fix NWOG** — wider stop or trailing exit, or re-study with different parameters
+4. **Study NDOG (daily gap)** — may overlap with B-Day, needs validation
+5. **Re-optimize disabled strategies** — See [strategy expansion roadmap](../brainstorm/12-strategy-expansion-roadmap.md)
