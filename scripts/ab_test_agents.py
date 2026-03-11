@@ -141,7 +141,7 @@ def get_agent_filter(enable_debate=False):
         llm_client = OllamaClient(
             base_url="http://spark-ai:11434/v1",
             model="qwen3.5:35b-a3b",
-            timeout=30,
+            timeout=180,
         )
         if not llm_client.is_available():
             print("WARNING: LLM endpoint not reachable — debate will be disabled")

@@ -1030,6 +1030,402 @@ Strategies should have LOW correlation with each other for portfolio diversifica
 
 ---
 
-*Document Version: 1.0*
+*Document Version: 2.0*
+*Updated: 2026-03-10*
 *Status: Brainstorm / Active Planning*
+
+---
+
+## 8. Section G: Internet Research — New Strategies (2026-03-10)
+
+> Strategies discovered via web research that are NOT in our current codebase or Sections A-C above.
+> Prioritized by: data availability, backtested evidence, and fit with our 2-4 trades/day target.
+
+### G1. NQ/ES SMT Divergence at Killzone (Cross-Instrument)
+
+**Concept**: When NQ and ES diverge at a swing extreme — one makes a new high/low but the other fails to confirm — this signals institutional positioning against the move. This is the SMT setup you identified on 2026-03-10 (ES swept London low while NQ held higher low → bullish clue).
+
+**Entry rules:**
+```
+Bullish SMT:
+  1. NQ holds higher low while ES makes new lower low (or vice versa)
+  2. Time: NY Open killzone (9:30-11:00 ET) or PM (14:00-15:00 ET)
+  3. Confirm with FVG or liquidity sweep at divergence point
+  4. Enter LONG after confirmation candle above the low
+  Stop: Beyond divergence extreme on both charts
+  Target: 1.5-2x risk, or opposite session liquidity pool
+
+Bearish SMT: Mirror logic at highs
+```
+
+**Reported stats**: 70-80% WR when combined with FVG confirmation + killzone timing (discretionary, not systematically backtested)
+
+**Data requirements**: Need ES 1-min bars loaded alongside NQ. Swing detection (5-10 bar lookback). **This doubles our data storage and backtest time.**
+
+**Integration**: Could be a FILTER for OR Rev rather than standalone — "if SMT divergence present, increase confidence for OR Rev in divergence direction." This avoids needing ES as a separate backtest instrument.
+
+**Priority**: **HIGH** — aligns with your 2026-03-10 observation. Start as filter/confluence, not standalone.
+
+**Sources**: [MetroTrade - SMT Trading Futures](https://www.metrotrade.com/smt-trading-futures/), [ICT SMT Divergence](https://innercircletrader.net/tutorials/ict-smt-divergence-smart-money-technique/)
+
+---
+
+### G2. Asia Session Sweep + London/NY Continuation
+
+**Concept**: A 17-year study (4,262 NQ days) shows the Asia session range is used as a liquidity trap. When London sweeps one side, the subsequent move has strong directional bias.
+
+**Key statistics (Herman Trading, 17 years of 1-min NQ data)**:
+- Two-thirds of all trading days sweep Asia high before 05:00 ET
+- If London sweeps Asia High: 60.54% probability of higher close
+- If London sweeps Asia Low: 53.13% probability of lower close
+- Pre-London sweep → London continues that direction: **70-79%** of the time
+- Average Asia range: 78.45 points
+- When Asia range < 78.45pt average: London takes both sides ~19% of time (false signals increase)
+
+**Entry rules:**
+```
+  1. Define Asia range (18:00-02:00 ET or 02:00-09:00 ET)
+  2. Wait for London to sweep one side
+  3. Enter in sweep direction after 1-2 bar confirmation
+  Stop: Opposite Asia range boundary
+  Target: Prior day high/low or NY open POC
+  Time: London killzone (02:00-05:00 ET) or NY continuation (09:30-11:00 ET)
+```
+
+**Data requirements**: Globex 1-min bars (already have). Asia range boundaries computed from overnight data.
+
+**Priority**: **HIGH** — strongest published statistical backing (17 years), complements OR Rev with pre-market bias conditioning. Could also serve as a session bias input for our agents.
+
+**Sources**: [Herman Trading — 17-Year Asia-London Study](https://www.hermantrading.pro/backtest-library/meditation-for-creative-block-guided-zwe47-23wcs)
+
+---
+
+### G3. Intraday Momentum Breakout (Noise-Area / First 30-Min Return)
+
+**Concept**: Quantitatively documented strategy (Quantitativo, 2024). The direction of the first 30 minutes predicts the last 30 minutes. A "noise area" (14-day average price movement from open) filters for significant breakouts.
+
+**Backtested performance (published, 2010-2024, 14 years)**:
+| Metric | NQ | ES |
+|--------|-----|-----|
+| Annual return | 24.3% | — |
+| Sharpe ratio | 1.67 | — |
+| Max drawdown | 24% | 24% |
+| Win rate | 38% | 36% |
+| Payoff ratio | 2.25 | 2.09 |
+| Expected return/trade | +6 bps | +2 bps |
+
+**Entry rules:**
+```
+  1. Compute "noise area" upper/lower boundary from 14-day avg price movement from open
+  2. LONG: price closes above upper boundary (abnormal buying pressure)
+  3. SHORT: price closes below lower boundary
+  Exit: Trailing stop based on VWAP deviation, or at RTH close (16:00)
+```
+
+**Data requirements**: Standard 1-min OHLCV + 14-day lookback. **No additional data needed.**
+
+**Key difference from our OR strategies**: Uses a VOLATILITY-based range (not time-based IB/OR). This is a continuation play, not a reversal. 38% WR with 2.25 payoff = trend-following profile.
+
+**Priority**: **HIGH** — rigorous 14-year backtest with published stats. Low WR but high PF (different style from our OR Rev). Easy to implement.
+
+**Sources**: [Quantitativo — Intraday Momentum for ES and NQ](https://www.quantitativo.com/p/intraday-momentum-for-es-and-nq), [QuantifiedStrategies — 19.6% Annual Returns](https://www.quantifiedstrategies.com/intraday-momentum-trading-strategy/)
+
+---
+
+### G4. PDH/PDL Reaction (Prior Day High/Low)
+
+**Concept**: Prior day's high and low are the most tested institutional reference levels. Breaks above PDH signal continuation; rejected tests signal failed auction (reversal).
+
+**Key statistics (Edgeful data)**:
+- NQ: ~75% probability price will TEST PDH or PDL if open is within prior day range
+- YM/ES: 81% continuation probability after PDH break (green close)
+- ES gap fill: gaps 0.0-0.19% fill 89-93% of the time
+
+**Entry rules:**
+```
+Continuation (PDH Break):
+  1. Price breaks above PDH on 1-min close
+  2. Enter LONG on first pullback to PDH from above
+  Stop: Below PDH - 15pts (NQ)
+  Target: 1.0x prior day range above PDH
+
+Failed Auction (Reversal):
+  1. Price spikes above PDH, reverses within 3 bars, closes back below
+  2. Enter SHORT at close back below PDH
+  Stop: Above spike high
+  Target: POC or prior day midpoint
+```
+
+**Data requirements**: Prior day high/low — **already computed in our session context**.
+
+**Priority**: **HIGH** — data already available, strong statistical backing, fits our existing infrastructure perfectly. Integrates with `session_bias_lookup`.
+
+**Sources**: [Edgeful — Previous Day Range Indicator](https://www.edgeful.com/blog/posts/previous-day-range-indicator-tradingview)
+
+---
+
+### G5. Double Distribution Trend Day (AM/PM Distribution Split)
+
+**Concept**: Two distinct TPO value areas within one session, separated by single prints. Price auctions in first distribution (AM), breaks with conviction, creates second distribution (PM). This is the Dalton structural pattern behind your disabled "Trend Day" strategies.
+
+**Entry rules:**
+```
+  1. Pre-condition: Small IB (< 70pts NQ), flat early DPOC
+  2. Trigger: First distribution forms (9:30-10:30). Price breaks out with single prints
+  3. Entry: Acceptance close in NEW distribution zone (post-breakout)
+  Stop: Below single print band (gap between distributions)
+  Target: 1.0-1.5x first distribution height from break point
+```
+
+**Frequency**: ~5-8% of sessions (per Dalton). Expected 14-22 trades on 270 sessions.
+
+**Data requirements**: TPO profile + single print detection — **already in deterministic modules**.
+
+**Priority**: **MEDIUM** — strong theoretical backing, low frequency. Natural extension of Trend Day rewrite (A1). Could be a sub-type trigger within the rewritten TrendDayBull/Bear.
+
+**Sources**: [MarketCalls — Market Profile Day Types](https://www.marketcalls.in/market-profile/market-profile-different-types-of-profile-days.html)
+
+---
+
+### G6. Neutral Day Extreme Reversal (Trap Extension)
+
+**Concept**: On a Neutral Day (extensions beyond BOTH IB sides), a significant extension (>1.0x IB) that gets fully reclaimed signals a trapped move. Entry on reclaim of IB boundary.
+
+**Entry rules:**
+```
+  1. Price extended > 1.0x IB beyond one side (e.g., IBH at 500, price trades to 600)
+  2. Price reverses and closes back INSIDE IB on 5-min bar (reclaims IBH/IBL)
+  3. Enter on next 1-min open after reclaim bar closes
+  Stop: 50% of failed extension (midpoint)
+  Target: Opposite IB boundary, then opposite extension
+  Time: Typically 11:00-14:00 (after IB established)
+```
+
+**Data requirements**: IB boundaries + extension tracking — **already available**.
+
+**Priority**: **MEDIUM** — fills the mid-session gap. Different from IBH Sweep (which catches initial sweeps). This fires later when the extension FAILS.
+
+---
+
+### G7. IB Extension Continuation (1x → 1.5x → 2.0x)
+
+**Concept**: After IB breaks in one direction and reaches 1.0x extension, use pullback to 1.0x level as entry for continuation to 1.5x and 2.0x.
+
+**Key statistics (TradingView/Rancho Dinero backtests)**:
+- NQ single IB break: 82.17% of the time break occurs in only one direction
+- 1.0x → 1.5x continuation: 27-29% of the time
+- 1.0x → 2.0x continuation: 15-16% of the time
+- ORB backtest: 114 trades, 74.56% WR, PF 2.512
+
+**Entry rules:**
+```
+  1. IB breaks in one direction (close outside IB)
+  2. Price reaches 1.0x extension
+  3. Enter on pullback to 1.0x level (treat as S/R)
+  Stop: Back inside IB
+  Target: 1.5x extension; if 1.5x reached, trail to 2.0x
+```
+
+**Key difference from our 20P IB Extension**: 20P is a FADE of the extension. This is a CONTINUATION after extension. Different trade thesis, different timing.
+
+**Data requirements**: IB boundaries + extension levels — **already computed**.
+
+**Priority**: **MEDIUM** — complements 20P (which fades, this continues). Together they cover both sides of IB extension action.
+
+**Sources**: [TradingView — IB Extension Statistics](https://www.tradingview.com/script/UYVre3kq-Initial-Balance-Breakout-Extension-Statistics-ES-NQ/)
+
+---
+
+### G8. ICT Silver Bullet (Time-Window FVG Fill)
+
+**Concept**: Time-restricted FVG strategy in two 1-hour windows: AM (10:00-11:00 ET) and PM (14:00-15:00 ET). FVGs that form in first 15-20 minutes of the window get filled within the hour.
+
+**Reported stats**: 70-80% WR when conditions align. Highly regime-dependent — July 2023 on NAS100 was exceptional, other months poor.
+
+**Entry rules:**
+```
+  1. Time: 10:00-11:00 ET or 14:00-15:00 ET only
+  2. FVG forms in first 15-20 minutes of window
+  3. Enter when price returns to fill the FVG
+  Stop: Below FVG (bullish) or above (bearish)
+  Exit: Session high/low or end of 60-min window (time stop)
+```
+
+**Data requirements**: 1-min bars + FVG detection — **already have FVG lifecycle module**.
+
+**Priority**: **MEDIUM** — we already have FVG infrastructure. Time-window gating makes it precise. You noted "potentially a good FVG short" in your 2026-03-10 review.
+
+**Sources**: [ICT Silver Bullet](https://innercircletrader.net/tutorials/ict-silver-bullet-strategy/)
+
+---
+
+### G9. DPOC Migration Continuation (Pullback to Migrated DPOC)
+
+**Concept**: When DPOC migrates >40pts from IB midpoint, value has shifted. Entry on pullback to DPOC in the migration direction.
+
+**Entry rules:**
+```
+  1. DPOC migrated > 40pts from IB midpoint toward one side
+  2. LONG: DPOC migrated up, price pulls back to DPOC from above
+  3. SHORT: DPOC migrated down, price rallies to DPOC from below
+  Stop: 20-25pts beyond DPOC (inside old value area)
+  Target: 1.5x IB range extension from current DPOC
+  Time: 10:30-14:00 only
+```
+
+**Data requirements**: DPOC tracking — **already in deterministic modules** (DPOC migration direction is computed).
+
+**Priority**: **MEDIUM** — differs from disabled "Morph to Trend" (breakout play). This is a pullback-to-value play. Lower risk, higher frequency.
+
+**Sources**: [Axia Futures — Market Profile Tactics](https://axiafutures.com/blog/market-profile-tactics-to-execute-big-size/)
+
+---
+
+### G10. ICT Power of 3 / NY Open Manipulation (Globex Sweep)
+
+**Concept**: Accumulation-Manipulation-Distribution framework. At RTH open, price briefly sweeps outside Globex range (stop raid), then reverses for the session.
+
+**Entry rules:**
+```
+  1. Define Globex range (03:00-09:30 ET high and low)
+  2. First 15 min after 9:30: price sweeps Globex high or low
+  3. Sweep = price trades outside but closes back inside within 3 bars
+  4. Enter in reversal direction
+  Stop: 20pts beyond sweep extreme (NQ)
+  Target: Opposite Globex range extreme, then prior session POC
+```
+
+**Frequency**: ~3-4 days per week. No published systematic WR.
+
+**Data requirements**: Globex range — **already computed in deterministic modules (overnight_high, overnight_low)**.
+
+**Priority**: **LOW-MEDIUM** — similar to OR Rev but uses Globex range instead of OR. Could complement OR Rev as pre-OR signal.
+
+**Sources**: [ICT Power of Three](https://innercircletrader.net/tutorials/ict-power-of-3/)
+
+---
+
+### G11. Prior Week High/Low Mean Reversion
+
+**Concept**: Weekly levels attract institutional activity (option expiries, rebalancing). Mean reversion when price overshoots PWH/PWL.
+
+**Entry rules:**
+```
+  1. Price tests PWH or PWL (within 15pts on NQ)
+  2. Rejection: 2 consecutive 1-min bars closing back away from level
+  3. Enter on second rejection bar close
+  Stop: 25pts beyond weekly level
+  Target: Weekly midpoint or intraday POC
+```
+
+**Data requirements**: Weekly high/low from daily OHLC. Easy to compute.
+
+**Priority**: **LOW** — no published backtest. Edge is theoretically sound but unvalidated.
+
+---
+
+### G12-G13. Order Flow Delta Strategies (DATA GAP)
+
+**G12: Absorption/Delta Divergence at Structural Level** — Price at key level (VAH/VAL/PDH/PDL) + delta divergence = absorption signal. Reported 70-75% WR with structural level confluence.
+
+**G13: Iceberg Order Detection at Round Numbers** — Repeated tests of round numbers (21000, 21100) with near-zero delta = iceberg bid/ask.
+
+**Data requirements**: Per-bar bid/ask delta. **Our current 1-min OHLCV does NOT include this.** Would need tick data or footprint chart feed from NinjaTrader.
+
+**Priority**: **LOW** — significant data gap. Flag for future when we add tick-level ingestion.
+
+---
+
+## 9. Updated Priority Ranking (v2.0)
+
+### Target: 2-4 trades per day (currently 0.76/day)
+
+To reach 2-4 trades/day from 270 sessions = 540-1,080 total trades needed. Currently 408. Need +132 to +672 additional trades.
+
+### Tier 1: Implement Now — HIGH confidence, data ready
+
+| Rank | Strategy | Source | Expected Trades | WR | PF | Data? |
+|------|----------|--------|----------------|-----|-----|-------|
+| **1** | **Trend Day Bull/Bear Rewrite** | A1 | 60-100 | 50-55% | 2.0+ | Yes |
+| **2** | **VA Edge Fade (New)** | B1 | 80-150 | 55-65% | 1.5-2.0 | Yes |
+| **3** | **PDH/PDL Reaction** | G4 (NEW) | 40-80 | 55-65% | 1.5-2.0 | Yes |
+| **4** | **Asia Session Sweep** | G2 (NEW) | 30-60 | 60-70% | est 1.5+ | Yes |
+| **5** | **NWOG Gap Fill** | B3 | 10-27 | 52-70% | 1.3-2.0 | Yes |
+| **6** | **B-Day IBH Short** | B1 ext | 20-30 | 60% | 1.5+ | Yes |
+
+**Tier 1 total**: +240-447 trades → 648-855 total → **2.4-3.2 trades/day**
+
+### Tier 2: Study + Prototype — needs indicators or infrastructure
+
+| Rank | Strategy | Source | Expected Trades | Blocker |
+|------|----------|--------|----------------|---------|
+| **7** | **Intraday Momentum Breakout** | G3 (NEW) | 50-100 | 14-day noise area calc |
+| **8** | **SMT Divergence (as filter)** | G1 (NEW) | Filter, not trades | ES data loading |
+| **9** | **Mean Reversion VWAP Rewrite** | A2 | 40-80 | ADX + BB computation |
+| **10** | **ICT Silver Bullet (FVG windows)** | G8 (NEW) | 30-50 | FVG time-window gating |
+| **11** | **IB Extension Continuation** | G7 (NEW) | 20-40 | Complements 20P (fade vs continue) |
+| **12** | **NDOG (Daily Gap Fill)** | C4 | 100-150 | Gap fill study |
+
+### Tier 3: Research — theoretical or needs validation
+
+| Rank | Strategy | Source | Notes |
+|------|----------|--------|-------|
+| **13** | Double Distribution Trend Day | G5 (NEW) | Sub-type of Trend Day rewrite |
+| **14** | Neutral Day Extreme Reversal | G6 (NEW) | Mid-session trap play |
+| **15** | DPOC Migration Continuation | G9 (NEW) | Differs from disabled Morph to Trend |
+| **16** | NY Open Manipulation (Power of 3) | G10 (NEW) | Similar to OR Rev, Globex-based |
+| **17** | Poor High/Low Plays | B6 | Needs prior session persistence |
+| **18** | BB Extreme Reversal | C1 | May replace MR VWAP |
+| **19** | Prior Week High/Low Reversion | G11 (NEW) | No backtest data |
+
+### Tier 4: Data Gap — cannot implement yet
+
+| Rank | Strategy | Source | Blocker |
+|------|----------|--------|---------|
+| **20** | Absorption/Delta Divergence | G12 (NEW) | Per-bar bid/ask delta |
+| **21** | Iceberg Order Detection | G13 (NEW) | Per-bar bid/ask delta |
+| **22** | TICK Extremes | C5 | $TICK data feed |
+| **23** | Two Hour Trader (Options) | B8 | Options chain data |
+
+---
+
+## Appendix D: Updated Strategy Heat Map (v2.0)
+
+```
+                     RANGE-BOUND         TRANSITIONING        TRENDING
+                   (ADX<20, balance)    (ADX 20-30)         (ADX>30)
+                  ┌─────────────────┬─────────────────┬─────────────────┐
+  PRE-MARKET      │                 │  Asia Sweep*    │  Asia Sweep*    │
+  (02:00-09:30)   │                 │                 │                 │
+                  ├─────────────────┼─────────────────┼─────────────────┤
+  FIRST HOUR      │  OR Rev         │  OR Rev         │  OR Rev         │
+  (9:30-10:30)    │  OR Acceptance  │  OR Acceptance  │  OR Acceptance  │
+                  │  NWOG (Mon)     │  NWOG (Mon)     │  20P IB Ext     │
+                  │  PDH/PDL*       │  PDH/PDL*       │  PDH/PDL*       │
+                  │  NY Open Manip* │  Momentum BkO*  │  Momentum BkO*  │
+                  ├─────────────────┼─────────────────┼─────────────────┤
+  IB CLOSE        │  B-Day          │  B-Day          │  Trend Day*     │
+  (10:30-11:30)   │  80P Rule       │  VA Edge Fade*  │  Trend Day*     │
+                  │  VA Edge Fade*  │  80P Rule       │  IB Ext Cont*   │
+                  │  Poor H/L*      │  IB Ext Cont*   │  20P IB Ext     │
+                  │  Silver Bullet* │  Silver Bullet*  │                 │
+                  ├─────────────────┼─────────────────┼─────────────────┤
+  MID-SESSION     │  Mean Rev VWAP* │  NDOG*          │  Trend Day*     │
+  (11:30-14:00)   │  Neutral Ext*   │  DPOC Migr*     │  DPOC Migr*     │
+                  │  VWAP Bands*    │  Dbl Distrib*   │  (trailing)     │
+                  ├─────────────────┼─────────────────┼─────────────────┤
+  PM SESSION      │  Silver Bullet* │                 │  Trend Day*     │
+  (14:00-16:00)   │                 │                 │  (trailing only)│
+                  └─────────────────┴─────────────────┴─────────────────┘
+
+  * = new or re-optimized strategy
+  SMT divergence = cross-cutting FILTER applied to all strategies
+  Asia Sweep = pre-market bias conditioning for session direction
+```
+
+**New gaps filled by v2.0:**
+1. **Pre-market session** — Asia Sweep gives directional bias before RTH opens
+2. **First hour density** — PDH/PDL + Momentum Breakout add 2-3 more signals per day
+3. **Mid-session balance** — Neutral Day Extreme + DPOC Migration fill the 11:30-14:00 dead zone
+4. **Cross-instrument confluence** — SMT divergence as filter improves all strategies
 *Next review: After Tier 1 implementation complete*

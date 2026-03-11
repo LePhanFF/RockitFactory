@@ -23,7 +23,7 @@ class OllamaClient:
         self,
         base_url: str = "http://spark-ai:11434/v1",
         model: str = "qwen3.5:35b-a3b",
-        timeout: int = 30,
+        timeout: int = 180,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -81,9 +81,11 @@ class OllamaClient:
         """Extract content, reasoning, and usage from OpenAI-compatible response."""
         try:
             choice = body["choices"][0]["message"]
+            # vLLM uses "reasoning_content", Ollama uses "reasoning"
+            reasoning = choice.get("reasoning_content", "") or choice.get("reasoning", "")
             return {
                 "content": choice.get("content", ""),
-                "reasoning": choice.get("reasoning", ""),
+                "reasoning": reasoning,
                 "usage": body.get("usage", {}),
                 "model": body.get("model", ""),
             }
