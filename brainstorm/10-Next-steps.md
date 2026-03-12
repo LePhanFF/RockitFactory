@@ -955,3 +955,315 @@ These three modules build on each other:
 - Swing points: Current instrument only, uses existing 1-min bars
 - Trendlines: Current instrument only, uses swing points
 - SMT: Needs ES + YM data loaded alongside NQ (requires multi-instrument loader enhancement)
+
+---
+
+## PRIORITY: Migrate Ollama → vLLM for Concurrent Inference
+
+> **Status**: TODO — HIGH PRIORITY
+> **Date added**: 2026-03-11
+> **Why**: Ollama serves requests sequentially. A single debate (Advocate + Skeptic) takes ~2 min. Full 270-session backtest takes ~3-4 hours. vLLM supports continuous batching and concurrent requests, enabling parallelized backtests.
+
+### Current State (Ollama)
+- **Host**: spark-ai (DGX Spark, 128GB)
+- **Model**: qwen3.5:35b-a3b via Ollama
+- **Config**: `num_ctx 131072` (128K context), `num_predict 8000` (8K max output)
+- **Throughput**: ~50-60s per LLM call, ~2 min per signal (Advocate + Skeptic sequential)
+- **Concurrency**: None — requests queue behind each other
+- **Full backtest**: ~3-4 hours for 270 sessions (sequential)
+
+### Target State (vLLM)
+- **Same host**: spark-ai (DGX Spark, 128GB)
+- **Model**: Same qwen3.5:35b-a3b weights
+- **API**: OpenAI-compatible (same as Ollama — `OllamaClient` works as-is, just change `base_url`)
+- **Key advantage**: Continuous batching — multiple requests processed concurrently on GPU
+- **Concurrency target**: 2-3 parallel backtest streams, each firing LLM calls independently
+
+### Parallelization Strategy
+
+**Option A: Parallel backtests (simplest)**
+- Run 2-3 instances of `ab_test_agents.py` simultaneously (e.g., split sessions into chunks)
+- Each instance fires LLM calls independently → vLLM batches them on GPU
+- Estimated speedup: 2-3x (3-4 hours → 1-1.5 hours)
+- Implementation: Add `--session-range 0-90`, `--session-range 90-180`, `--session-range 180-270` args
+- Merge results after all chunks complete
+
+**Option B: Async Advocate + Skeptic (medium effort)**
+- Currently Skeptic waits for Advocate (sees Advocate's thesis)
+- For INDEPENDENT signals across sessions, fire Advocate calls concurrently via asyncio
+- Skeptic still sequential per signal, but multiple signals debated in parallel
+- Requires: async `OllamaClient`, `BacktestEngine` refactor for parallel session processing
+
+**Option C: Full async pipeline (most effort)**
+- Async backtest engine processes multiple sessions concurrently
+- Each session's signals fire LLM calls as they arise
+- vLLM batches all concurrent requests
+- Estimated speedup: 3-5x depending on GPU memory / KV cache capacity
+- Requires: significant refactor of BacktestEngine + AgentPipeline
+
+**Recommended path**: Option A first (trivial to implement), then Option B if more speed needed.
+
+**Option D: Skip obvious signals (biggest bang for buck)**
+- If mechanical filters already passed with high confidence AND deterministic agents score > 0.7 → skip LLM debate, auto-TAKE
+- Only debate ambiguous signals (agent score 0.3-0.7) where LLM nuance matters
+- Could cut LLM calls by 50-70% — most signals are clear-cut
+- Implementation: Add `debate_threshold` to pipeline config. Score below threshold = auto-decide, above = debate
+- This is orthogonal to vLLM — do both for compounding speedup
+
+### vLLM Deployment Notes
+- Install: `pip install vllm` on DGX Spark
+- Launch: `vllm serve qwen3.5:35b-a3b --max-model-len 131072 --max-num-seqs 8 --gpu-memory-utilization 0.90`
+- `--max-num-seqs 8` allows up to 8 concurrent requests (KV cache shared)
+- Monitor: vLLM exposes `/metrics` endpoint (Prometheus format) — request queue depth, tokens/sec, batch size
+- **No code changes needed** in `OllamaClient` — just change `base_url` from Ollama to vLLM endpoint
+- Thinking tokens: vLLM handles Qwen3 thinking natively via `--enable-reasoning`
+
+### Model Benchmarking Framework
+
+> **Key question**: Do we need a 35B model? If an 8B model makes the same TAKE/SKIP decisions, use the 8B and get 4x speed.
+
+**Benchmark protocol**:
+1. Pick 5-10 validated sessions with known good/bad signals (from Run E results)
+2. Run each model through the same Advocate/Skeptic prompts
+3. Compare: decision match rate, reasoning quality, structured JSON compliance, latency
+4. Score: decision_accuracy (vs baseline) × speed = efficiency score
+
+**Candidate models** (all Ollama-compatible):
+
+| Model | Active Params | Est. Speed | Thinking Mode | Notes |
+|-------|--------------|-----------|---------------|-------|
+| Qwen3.5:35b-a3b | 3B active | ~55s | Yes (eats tokens) | Current baseline |
+| GLM-4.7 NFVP4 | TBD | TBD | No | No thinking overhead, clean JSON |
+| Qwen3:8B | 8B | ~15s | Yes | 4x faster, may be sufficient |
+| Qwen3:14B | 14B | ~25s | Yes | Potential sweet spot |
+| Phi-4 14B | 14B | ~20s | No | Strong reasoning, no thinking tax |
+| Gemma 3 12B | 12B | ~20s | No | Good structured output |
+| Llama 4 Scout | 17B active | ~30s | No | MoE, strong reasoning |
+
+**What to measure per model**:
+- Decision agreement with 35B baseline (TAKE/SKIP match rate)
+- JSON compliance (valid structured output without repair)
+- Reasoning quality (does it cite the right evidence?)
+- Latency per call (Advocate + Skeptic round-trip)
+- Token efficiency (does it waste tokens on irrelevant thinking?)
+
+**Implementation**: `scripts/benchmark_models.py` — runs N sessions across M models, produces comparison table.
+
+### Training vs Pure Agentic — Decision Framework
+
+> **Core question**: If prompt engineering + DuckDB retrieval + good system prompts get 90% of the way there, is LoRA training worth the complexity?
+
+**When training IS worth it**:
+- Base model consistently misinterprets domain patterns (P-shape, B-shape, Dalton theory)
+- Prompt is too long (>4K tokens of domain knowledge) and you want to compress into weights
+- Need faster inference (knowledge baked in vs read from prompt every call)
+- Want consistency — trained model gives more deterministic responses to same input
+
+**When training is NOT worth it**:
+- Agentic approach (system prompts + retrieval) produces equivalent decisions
+- A smaller untrained model + good prompts matches a larger trained model
+- Domain knowledge changes frequently (retrain cost > prompt update cost)
+- The LLM is just "rubber-stamping" deterministic agent decisions anyway
+
+### The Raw Snapshot Gap — Architecture Insight (2026-03-11)
+
+> **Current state**: Advocate/Skeptic only see pre-digested scorecard (evidence cards + 6 context fields + DuckDB stats). They NEVER see the raw deterministic JSON from the 38 modules.
+
+**What the LLM sees today**:
+```
+evidence_cards: [
+  {source: "profile_observer", direction: "bullish", strength: 0.7, observation: "Price above POC..."},
+  {source: "momentum_observer", direction: "bearish", strength: 0.4, observation: "Delta declining..."},
+]
+session_context: {day_type: "p_day", session_bias: "Bullish", trend_strength: "moderate", ...}
+historical_stats: {strategy_overall: {trades: 55, win_rate: 76.4, profit_factor: 5.39}}
+```
+
+**What the LLM does NOT see**:
+- Raw VA levels (VAH=21550, VAL=21420, POC=21490) and price distance from each
+- IB extension % (currently 1.3× IB range — how far has price extended?)
+- FVG positions (unfilled bearish FVG at 21580-21600 — overhead supply)
+- Wick parade count (4 wicks rejected at 21550 — sellers active)
+- DPOC migration path (POC moved from 21470 → 21490 in last 3 periods)
+- Delta cumulative flow + delta divergence signals
+- TPO letter-by-letter distribution shape
+- Prior session VA overlap % with current session
+- CRI sub-scores (terrain, identity, permission) — only GO/CAUTION status passed
+
+**The gap**: Observers reduce 38 modules → ~9 cards. Information is LOST. A trained LLM could spot patterns across the raw fields that no single observer captures. For example:
+- "Price at POC + 4 wick rejections + FVG overhead + declining delta = SHORT setup strengthening" — this requires seeing 4 fields simultaneously, not 4 separate cards.
+- "IB extension 1.8× + prior VA overlap 85% + DPOC stable = rotation day, fade the extension" — cross-module pattern.
+
+**Two approaches to fix this**:
+
+**Approach A: Pass raw snapshot alongside scorecard (no training needed)**
+- Add `snapshot_json` to the debate context (already available in `session_context.snapshot_json`)
+- LLM gets scorecard + raw data → can do its own synthesis
+- Pro: No training. Works with any model. Easy to implement.
+- Con: Adds ~2-4K tokens to prompt. Base model may not understand domain-specific fields without training.
+
+**Approach B: Train LLM to interpret raw snapshots, then pass them (training justified)**
+- Train on (raw_snapshot → analysis) pairs — teach it what the fields mean and how they interact
+- Then in production: LLM sees scorecard + raw snapshot → trained understanding + observer scores
+- Pro: LLM genuinely understands the data, spots cross-module patterns observers miss
+- Con: Training cost + maintenance. Need to retrain when modules change.
+
+**Approach C: Hybrid — train a small "interpreter" model**
+- Train a small model (8B) specifically to read raw snapshots → produce a "deep analysis" summary
+- Feed that summary (not raw JSON) into the Advocate/Skeptic alongside scorecard
+- Pro: Fast (8B), specialized, doesn't slow down debate. Separates "understanding" from "arguing."
+- Con: Two models in the pipeline. More complexity.
+
+**Recommendation**: Approach D (below) supersedes A/B/C based on production architecture insight.
+
+### Approach D: Use Existing LLM Analysis Stream (Best Path — 2026-03-11)
+
+> **Key insight**: The production Rockit platform ALREADY runs LLM analysis every 5 min on raw deterministic data. By signal time, there are 3-12 slices of pre-computed LLM analysis available. Advocate/Skeptic don't need raw JSON — they need the LLM's own analysis output.
+
+**Production architecture (already running)**:
+```
+Every 5 min:  Raw deterministic (38 modules) → Qwen3.5 → LLM analysis → GCS bucket
+              ↓
+RockitUI:     Dashboard visualizes LLM analysis (12 tabs: Brief, Logic, Intraday, etc.)
+              ↓
+Gemini:       Reviews accumulated LLM outputs → HTF analysis + trade ideas
+```
+
+**What the agent pipeline should tap into**:
+```
+Signal fires at 10:15 →
+  Scorecard: evidence cards (9 cards, ~500 tokens)
+  + LLM analyses from 9:35, 9:40, 9:45, 9:50, 9:55, 10:00, 10:05, 10:10, 10:15
+    (each is a pre-digested summary, not raw JSON)
+  + DuckDB historical stats
+  → Advocate/Skeptic debate
+```
+
+**Why this is the right path**:
+1. **LLM work is amortized** — analysis happens on a timer, not on the signal's critical path
+2. **Context is small** — LLM summaries are 500-1K tokens each, vs 4K+ raw JSON
+3. **No training needed** — the LLM output IS the interpretation of raw data
+4. **Progressive context** — agents see HOW analysis evolved over the session (bullish at 9:35, weakening by 10:00, bearish by 10:15)
+5. **Already proven** — this is what the production dashboard shows and what Gemini synthesizes from
+
+**What Advocate/Skeptic need from LLM stream**:
+- Last 3-6 snapshot analyses (not all — most recent captures the evolving picture)
+- Key fields: market_structure_assessment, bias_direction, key_levels, risk_factors, trade_ideas
+- NOT the full ROCKIT_v5.6 output — trimmed to decision-relevant fields
+
+**Two-tier model strategy for agents**:
+- **Tier 1 (Qwen3.5 local)**: Produces 5-min analysis stream (already running). Also powers Advocate/Skeptic debate (fast, local)
+- **Tier 2 (Gemini/Opus API)**: Periodic synthesis of accumulated analyses → meta-observations, HTF analysis, trade ideas. This is the "frontier review" layer — not per-signal, but per-session or per-hour
+
+**Implementation plan**:
+1. Add LLM analysis stream to backtest replay — simulate what production generates every 5 min
+   - Option: Pre-generate analysis for all 270 sessions (like training pairs), store in DuckDB `llm_analyses` table
+   - Option: Pull from existing GCS bucket if historical analyses exist
+2. In `pipeline.py:_run_debate()`, inject last N LLM analyses into debate context
+3. Advocate/Skeptic prompts get: scorecard + LLM analysis trail + historical stats
+4. Benchmark: does LLM analysis stream improve decision quality over scorecard-only?
+
+**Training decision (revised)**:
+- Training Qwen3.5 to better interpret deterministic data → improves the 5-min analysis stream quality
+- Better stream → better context for Advocate/Skeptic → better decisions
+- So training is about improving the ANALYST, not the DEBATERS
+- Decision: If base Qwen3.5 analysis quality is already good enough for agents to make correct decisions, skip training. If analysis misses important patterns (e.g., doesn't flag wick parades, misreads TPO shapes), train to fix those gaps.
+
+### The Courtroom Analogy — Agent Pipeline as Legal Process (2026-03-11)
+
+> **Principle**: Don't make the lawyers read forensic reports. Train expert witnesses. Lawyers argue from testimony.
+
+| Legal Role | Pipeline Role | What They Do | Speed |
+|------------|--------------|--------------|-------|
+| **Domain Experts** | Deterministic modules (38) | Specialized factual testimony: "IB extended 1.8×", "4 wick rejections at VAH", "DPOC migrating up" | <10ms |
+| **Observer / Eyewitness** | Trained Qwen3.5 (trader's voice) | Interprets what experts report: "I see a P-shape forming, sellers trapped above POC, this is a fade setup" — trained on USER's analysis style, captures nuance + caution | ~5s/snapshot |
+| **Advocate Lawyer** | Advocate Agent (LLM) | Argues FOR the trade using expert data + eyewitness account | ~50s |
+| **Defense Lawyer** | Skeptic Agent (LLM) | Challenges the case: "But the eyewitness noted declining delta, and the IB expert says extension is weak" | ~60s |
+| **Judge** | Orchestrator (deterministic) | Rules based on both arguments, scorecard-based | <10ms |
+
+**Key distinction**:
+- **Domain experts** = facts (objective, deterministic, authoritative, fast)
+- **Analyst** = trained interpretation (domain expert + trader's voice — knows Dalton theory, Market Profile, 8 strategies, caution-over-conviction). Trained on user's analysis style via LoRA.
+- **Lawyers** = argumentation (don't need to be domain experts OR analysts — argue from testimony)
+- Training the LLM = training the analyst to interpret data the way the trader does
+- The training data IS the trader's voice — "here's what I see and what it means" with nuance and caution
+
+**Efficiency principle — "Court convenes on demand"**:
+```
+ALWAYS RUNNING (timer, amortized, cheap):
+  Every 5 min: Deterministic experts (38 modules, <10ms)
+             → Trained LLM analyst (your voice, ~5s)
+             → Analysis cached (DuckDB / GCS)
+  By 10:30: 12 analyst reports already filed, session context built
+
+ON-DEMAND ONLY (signal trigger OR user query):
+  Signal fires at 10:15 → Court convenes
+    Cached analyst testimony (last 3-6 reports) + Scorecard
+    → Advocate argues FOR → Skeptic challenges → Judge rules
+    → TAKE / SKIP / REDUCE_SIZE
+    Total: ~2 min
+
+  User asks at 10:45 "what do you see?" → Court convenes on demand
+    Same flow, but no signal — pure analysis response
+    15 analyst reports already in the file
+    → Rich synthesis without waiting for fresh LLM inference
+
+  No signal, no query → No trial. Court is idle. Zero cost.
+```
+
+**Why this is efficient**:
+- Analyst work is amortized (runs on 5-min timer regardless)
+- Advocate/Skeptic/Judge only spin up when there's a case
+- ~80% of sessions have 0-2 signals → court convenes 0-2 times
+- UI can query the analyst stream directly without convening court (dashboard use case)
+- Court can also convene for user queries (not just signals) — "should I take this setup?" gets the full debate treatment on demand
+
+**Key insight**: The expert witness (trained LLM) does its work on a TIMER (every 5 min), not on the signal's critical path. By the time a signal fires, the expert has already produced 3-12 reports covering the session's evolution. The lawyers just reference those reports.
+
+**Phased execution (chicken-and-egg resolved)**:
+
+```
+Phase A (NOW — in progress):
+  Run E backtest: Agents with scorecard ONLY (no LLM analysis stream)
+  Question: Do agents add alpha over mechanical filters?
+  ↓
+Phase B (NEXT):
+  Train Qwen3.5 as expert witness (LoRA on deterministic → analysis pairs)
+  Generate 5-min LLM analysis for all 270 backtest sessions
+  Store in DuckDB: llm_analyses table (session_date, snapshot_time, analysis_json)
+  ↓
+Phase C (THEN):
+  Re-run backtest with agents seeing scorecard + expert witness testimony
+  Advocate/Skeptic prompts get last 3-6 LLM analyses alongside evidence cards
+  ↓
+Phase D (COMPARE):
+  Run E (scorecard only) vs Run F (scorecard + expert witness)
+  Quantify: does expert testimony improve agent decisions?
+  If delta < 2% → expert witness adds noise, keep scorecard-only
+  If delta > 5% → expert witness is essential, training justified
+  If delta 2-5% → benchmark smaller/faster expert models
+```
+
+**What NOT to do**:
+- Don't feed raw deterministic JSON to lawyers (too much context, too slow)
+- Don't train the lawyers (Advocate/Skeptic) — they argue from prompts, not training
+- Don't use one model for everything — separate expert witness (trained, fast, 5-min timer) from lawyers (untrained, prompted, signal-time only)
+- Don't burden lawyers with full expert reports — trim to key findings relevant to the signal
+
+**Decision gate**: After Run E results + model benchmark:
+1. If LLM debate adds <2% WR over deterministic-only → skip training, focus on mechanical filters
+2. If LLM debate adds 2-5% WR AND a smaller model matches → use smaller model, no training
+3. If LLM debate adds >5% WR AND quality degrades with smaller models → train the smallest model that preserves quality
+4. If training a smaller model (8B) matches untrained 35B quality → train the 8B, get speed + quality
+
+**Recommendation**: Run E results first, then model benchmark, then decide. Don't train until the data justifies it.
+
+### Migration Checklist
+- [ ] Install vLLM on spark-ai
+- [ ] Download/convert qwen3.5:35b-a3b weights for vLLM (GGUF → HF format, or pull from HuggingFace directly)
+- [ ] Launch vLLM with 128K context + 8K max output
+- [ ] Validate: run same 5-session test, compare debate quality to Ollama baseline
+- [ ] Add `--session-range` arg to `ab_test_agents.py` (Option A parallelization)
+- [ ] Run parallel backtest: 3 chunks × 90 sessions → merge results
+- [ ] Update `configs/filters.yaml` with vLLM endpoint
+- [ ] Update deploy script (replace `deploy-128k.sh` with vLLM systemd service)

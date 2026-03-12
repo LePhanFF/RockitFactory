@@ -117,12 +117,16 @@ class BacktestEngine:
         prior_session_context = {}  # Tracks prior session info for context
         self._ib_range_history = []  # Rolling IB ranges for adaptive thresholds
 
-        for session_date in sessions:
+        total_sessions = len(sessions)
+        for idx, session_date in enumerate(sessions):
             session_df = df[df['session_date'] == session_date].copy()
             session_str = str(session_date)
 
             if len(session_df) < IB_BARS_1MIN:
                 continue
+
+            if verbose and idx % 25 == 0:
+                print(f"  [{idx+1}/{total_sessions}] Processing {session_str}...")
 
             self._process_session(
                 session_df, session_str, result, verbose,

@@ -20,6 +20,7 @@ Usage:
 
 import argparse
 import gc
+import logging
 import sys
 import uuid
 from datetime import datetime
@@ -171,7 +172,7 @@ def run_one(label, df, instrument, filters, session_bias_lookup, conn):
         session_bias_lookup=session_bias_lookup,
     )
 
-    result = engine.run(df, verbose=False)
+    result = engine.run(df, verbose=True)
     summary = compute_summary(result, instrument)
 
     filter_names = []
@@ -257,6 +258,12 @@ def load_strategies():
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     parser = argparse.ArgumentParser(description="A/B test agents vs mechanical filters")
     parser.add_argument("--no-merge", action="store_true")
     parser.add_argument("--instrument", default="NQ")

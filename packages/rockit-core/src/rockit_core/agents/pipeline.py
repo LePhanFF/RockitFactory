@@ -68,17 +68,16 @@ class AgentPipeline:
         """
         context = self._build_context(signal_dict, bar, session_context)
 
-        # 1. Gate check
+        # 1. Gate check (soft — CRI is evidence, not a block)
         gate_passed = self.gate.passes(context)
         all_cards = self.gate.evaluate(context)
 
-        # 2. Observers (only if gate passes)
-        if gate_passed:
-            for obs in self.observers:
-                all_cards.extend(obs.evaluate(context))
+        # 2. Observers always run (CRI is soft evidence, not a gate)
+        for obs in self.observers:
+            all_cards.extend(obs.evaluate(context))
 
         # 3. Debate (optional — between observers and orchestrator)
-        if self.enable_debate and gate_passed and len(all_cards) > 1:
+        if self.enable_debate and len(all_cards) > 1:
             try:
                 advocate_result, skeptic_result = self._run_debate(
                     all_cards, signal_dict, session_context or {}
@@ -106,6 +105,10 @@ class AgentPipeline:
         """Run Advocate then Skeptic debate (sequential — Skeptic needs Advocate's thesis)."""
         # Enrich context with DuckDB historical stats if available
         historical = self._query_historical(signal_dict, session_context)
+        strategy = signal_dict.get("strategy_name", "?")
+        direction = signal_dict.get("direction", "?")
+        session = session_context.get("session_date", "?") if session_context else "?"
+        logger.info("DEBATE [%s] %s %s — calling Advocate...", session, strategy, direction)
 
         debate_context = {
             "evidence_cards": evidence_cards,
@@ -116,18 +119,17 @@ class AgentPipeline:
 
         # Advocate builds the case
         advocate_result = self._advocate.debate(debate_context)
-        logger.debug(
-            "Advocate: direction=%s confidence=%.2f instinct_cards=%d",
-            advocate_result.direction, advocate_result.confidence,
-            len(advocate_result.instinct_cards),
+        logger.info(
+            "DEBATE [%s] Advocate done: direction=%s confidence=%.2f — calling Skeptic...",
+            session, advocate_result.direction, advocate_result.confidence,
         )
 
         # Skeptic challenges (sees Advocate's argument)
         debate_context["advocate_result"] = advocate_result
         skeptic_result = self._skeptic.debate(debate_context)
-        logger.debug(
-            "Skeptic: direction=%s confidence=%.2f warnings=%d",
-            skeptic_result.direction, skeptic_result.confidence,
+        logger.info(
+            "DEBATE [%s] Skeptic done: direction=%s confidence=%.2f warnings=%d",
+            session, skeptic_result.direction, skeptic_result.confidence,
             len(skeptic_result.warnings),
         )
 
