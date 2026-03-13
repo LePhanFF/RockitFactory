@@ -206,16 +206,29 @@ def run_one(label, df, instrument, filters, session_bias_lookup, conn):
     return summary, run_id, result
 
 
-def persist_agent_decisions_with_outcomes(conn, agent_filter, run_id, result):
-    """Match agent decisions to actual trade outcomes and persist."""
+def persist_agent_decisions_with_outcomes(conn, agent_filter, run_id, result,
+                                          baseline_result=None):
+    """Match agent decisions to actual trade outcomes and persist.
+
+    For TAKE decisions: match against result.trades (what actually happened).
+    For SKIP decisions: match against baseline_result.trades (what WOULD have happened
+    if the signal wasn't filtered). This is critical for evaluating skip quality.
+    """
     if not agent_filter or not hasattr(agent_filter, 'decisions'):
         return 0
 
     # Build trade lookup by (strategy, session_date) for outcome matching
     trade_lookup = {}
     for t in result.trades:
-        key = (t.strategy_name, t.session_date)
+        key = (t.strategy_name, str(t.session_date).split(' ')[0].split('T')[0])
         trade_lookup.setdefault(key, []).append(t)
+
+    # Build baseline lookup for SKIP outcome matching
+    baseline_lookup = {}
+    if baseline_result:
+        for t in baseline_result.trades:
+            key = (t.strategy_name, str(t.session_date).split(' ')[0].split('T')[0])
+            baseline_lookup.setdefault(key, []).append(t)
 
     count = 0
     for decision in agent_filter.decisions:
@@ -228,35 +241,46 @@ def persist_agent_decisions_with_outcomes(conn, agent_filter, run_id, result):
         signal_dir = meta.get("signal_direction", "")
         signal_time = meta.get("signal_time", "")
 
+        # Normalize session_date for matching
+        session_date_norm = str(session_date).split(' ')[0].split('T')[0]
+
         dec_dict["strategy_name"] = strategy
         dec_dict["session_date"] = session_date
         dec_dict["signal_direction"] = signal_dir
         dec_dict["signal_time"] = signal_time
         dec_dict["setup_type"] = meta.get("setup_type", "")
 
-        # Match to actual trade outcome (if TAKE → find the trade)
         actual_outcome = None
         actual_pnl = None
         was_correct = None
-        trade_key = (strategy, session_date)
-        if trade_key in trade_lookup:
-            matching_trades = trade_lookup[trade_key]
-            if matching_trades:
-                trade = matching_trades[0]
+        trade_key = (strategy, session_date_norm)
+
+        if decision.decision in ("TAKE", "REDUCE_SIZE"):
+            # For TAKE: look in this run's actual trades
+            if trade_key in trade_lookup and trade_lookup[trade_key]:
+                trade = trade_lookup[trade_key][0]
                 actual_outcome = "WIN" if trade.net_pnl > 0 else "LOSS"
                 actual_pnl = trade.net_pnl
-                if decision.decision == "TAKE":
-                    was_correct = trade.net_pnl > 0
-                elif decision.decision == "SKIP":
-                    was_correct = trade.net_pnl <= 0  # Correct skip = avoided a loss
+                was_correct = trade.net_pnl > 0
+                dec_dict["trade_id"] = trade.trade_id
+        elif decision.decision == "SKIP":
+            # For SKIP: look in baseline (what WOULD have happened)
+            if trade_key in baseline_lookup and baseline_lookup[trade_key]:
+                trade = baseline_lookup[trade_key][0]
+                actual_outcome = "WIN" if trade.net_pnl > 0 else "LOSS"
+                actual_pnl = trade.net_pnl
+                was_correct = trade.net_pnl <= 0  # Correct skip = avoided a loss
+                dec_dict["trade_id"] = trade.trade_id
+            elif trade_key in trade_lookup and trade_lookup[trade_key]:
+                # Fallback: check current run trades
+                trade = trade_lookup[trade_key][0]
+                actual_outcome = "WIN" if trade.net_pnl > 0 else "LOSS"
+                actual_pnl = trade.net_pnl
+                was_correct = trade.net_pnl <= 0
 
         dec_dict["actual_outcome"] = actual_outcome
         dec_dict["actual_pnl"] = actual_pnl
         dec_dict["was_correct"] = was_correct
-
-        # Include trade_id if matched
-        if trade_key in trade_lookup and trade_lookup[trade_key]:
-            dec_dict["trade_id"] = trade_lookup[trade_key][0].trade_id
 
         decision_id = f"{run_id}_{uuid.uuid4().hex[:8]}"
         persist_agent_decision(conn, decision_id, run_id, dec_dict)
@@ -320,6 +344,7 @@ def main():
     if args.debate_only:
         agent_e = get_agent_filter(enable_debate=True)
         configs = {
+            "A: No filters (baseline)": None,  # Always run baseline for SKIP outcome matching
             "E: Mech + Agent + LLM Debate": CompositeFilter(get_mechanical_filters() + [agent_e]),
         }
     else:
@@ -337,11 +362,18 @@ def main():
             )
 
     results = {}
+    run_results = {}  # Store BacktestResult objects for cross-referencing
+    baseline_result = None
     for label, filters in configs.items():
         summary, run_id, result = run_one(
             label, df, instrument, filters, session_bias_lookup, conn
         )
         results[label] = summary
+        run_results[label] = result
+
+        # Track baseline for SKIP outcome matching
+        if "A:" in label or "baseline" in label.lower():
+            baseline_result = result
 
         # Persist agent decisions for runs C, D, E
         if "Agent" in label or "Debate" in label:
@@ -351,7 +383,9 @@ def main():
                 af = agent_c
             else:
                 af = agent_d
-            n = persist_agent_decisions_with_outcomes(conn, af, run_id, result)
+            n = persist_agent_decisions_with_outcomes(
+                conn, af, run_id, result, baseline_result=baseline_result
+            )
             if n:
                 print(f"  Agent decisions persisted: {n}")
 
