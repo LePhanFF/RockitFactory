@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 
 from rockit_core.agents.base import AgentBase
+from rockit_core.agents.debate.json_repair import extract_json
 from rockit_core.agents.evidence import DebateResult, EvidenceCard
 from rockit_core.agents.llm_client import OllamaClient
 
@@ -35,7 +36,7 @@ def _load_system_prompt() -> str:
 class SkepticAgent(AgentBase):
     """LLM-powered agent that challenges the Advocate's thesis."""
 
-    def __init__(self, llm_client: OllamaClient, max_tokens: int = 4000):
+    def __init__(self, llm_client: OllamaClient, max_tokens: int = 8000):
         self._llm = llm_client
         self._max_tokens = max_tokens
         self._system_prompt = _load_system_prompt()
@@ -57,7 +58,10 @@ class SkepticAgent(AgentBase):
         return result.instinct_cards
 
     def debate(self, context: dict) -> DebateResult:
-        """Full debate — returns DebateResult with challenges and counter-evidence."""
+        """Full debate — returns DebateResult with challenges and counter-evidence.
+
+        Includes retry on JSON parse failure.
+        """
         evidence_cards: list[EvidenceCard] = context.get("evidence_cards", [])
         advocate_result: DebateResult | None = context.get("advocate_result")
         signal = context.get("signal", {})
@@ -73,7 +77,27 @@ class SkepticAgent(AgentBase):
             logger.warning("Skeptic LLM error: %s", response["error"])
             return DebateResult(agent="skeptic", raw_response=str(response))
 
-        return self._parse_response(response.get("content", ""))
+        content = response.get("content", "")
+        reasoning = response.get("reasoning", "")
+        result = self._parse_response(content, reasoning)
+
+        # Retry once if parse failed
+        if not result.thesis and not result.instinct_cards and content:
+            logger.info("Skeptic: first parse failed, retrying with repair prompt")
+            retry_prompt = (
+                "Your previous response was not valid JSON. "
+                "Output ONLY a valid JSON object with keys: "
+                "admit, reject, instinct_cards, thesis, direction, confidence, warnings. "
+                "No markdown, no explanation.\n\nOriginal input:\n" + user_prompt
+            )
+            response = self._llm.chat(self._system_prompt, retry_prompt, self._max_tokens)
+            if not response.get("error"):
+                result = self._parse_response(
+                    response.get("content", ""),
+                    response.get("reasoning", ""),
+                )
+
+        return result
 
     def _build_prompt(
         self,
@@ -143,18 +167,13 @@ class SkepticAgent(AgentBase):
 
         return json.dumps(prompt_data, indent=2)
 
-    def _parse_response(self, content: str) -> DebateResult:
-        """Parse LLM JSON response into DebateResult."""
-        try:
-            cleaned = content.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                cleaned = "\n".join(lines)
+    def _parse_response(self, content: str, reasoning: str = "") -> DebateResult:
+        """Parse LLM JSON response into DebateResult with robust extraction."""
+        data = extract_json(content, reasoning)
 
-            data = json.loads(cleaned)
-        except (json.JSONDecodeError, TypeError) as exc:
-            logger.warning("Skeptic response not valid JSON: %s", exc)
+        if data is None:
+            logger.warning("Skeptic response: JSON extraction failed (content=%d chars, reasoning=%d chars)",
+                          len(content), len(reasoning))
             return DebateResult(agent="skeptic", raw_response=content)
 
         # Parse instinct cards (counter-evidence)

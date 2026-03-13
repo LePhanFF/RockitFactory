@@ -118,3 +118,14 @@ research_strategies:
     description: "NWOG Gap Fill — Monday weekly gap fill with VWAP + acceptance filters"
     day_types: [all]
     direction: both
+
+  pdh_pdl_reaction:
+    enabled: true
+    description: "PDH/PDL Reaction — failed auction + rejection touch at prior day H/L"
+    day_types: [all]
+    direction: both
+    setup_modes: [A, C]
+    stop_mode: spike
+    target_mode: 2r
+    require_bias_alignment: true
+    poke_min: 5

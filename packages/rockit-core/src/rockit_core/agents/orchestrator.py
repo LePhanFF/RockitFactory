@@ -58,27 +58,14 @@ class DeterministicOrchestrator:
         """
         signal_dir = signal_dict.get("direction", "").upper()
 
-        # 1. Gate blocked → SKIP immediately
-        if not gate_passed:
-            confluence = self._build_confluence(evidence_cards, signal_dir)
-            return AgentDecision(
-                decision="SKIP",
-                confidence=1.0,
-                direction=None,
-                confluence=confluence,
-                reasoning="CRI gate: STAND_DOWN — signal blocked",
-                gate_passed=False,
-                evidence_cards=evidence_cards,
-            )
-
-        # 2. Admit all cards (MVP: no debate filtering)
+        # Admit all cards (MVP: no debate filtering)
         for card in evidence_cards:
             card.admitted = True
 
-        # 3. Score confluence
+        # Score confluence
         confluence = self._build_confluence(evidence_cards, signal_dir)
 
-        # 4. Make decision
+        # Make decision
         decision, reasoning = self._apply_rules(confluence, signal_dir)
 
         return AgentDecision(
@@ -108,39 +95,48 @@ class DeterministicOrchestrator:
         """
         signal_dir = signal_dict.get("direction", "").upper()
 
-        if not gate_passed:
-            confluence = self._build_confluence(evidence_cards, signal_dir)
-            return AgentDecision(
-                decision="SKIP",
-                confidence=1.0,
-                direction=None,
-                confluence=confluence,
-                reasoning="CRI gate: STAND_DOWN — signal blocked",
-                gate_passed=False,
-                evidence_cards=evidence_cards,
-            )
-
-        # 1. Resolve card admission disputes
+        # Resolve card admission disputes
         admitted_cards = self._resolve_disputes(
             evidence_cards, advocate_result, skeptic_result
         )
 
-        # 2. Add instinct cards from debate (already in evidence_cards list from pipeline)
+        # Add instinct cards from debate (already in evidence_cards list from pipeline)
         # Mark debate instinct cards as admitted
         for card in evidence_cards:
             if card.source in ("debate_advocate", "debate_skeptic"):
                 card.admitted = True
 
-        # 3. Score confluence (admitted cards only)
+        # Score confluence (admitted cards only)
         confluence = self._build_confluence_admitted(evidence_cards, signal_dir)
 
-        # 4. Make decision
+        # Make decision
         decision, base_reasoning = self._apply_rules(confluence, signal_dir)
 
         # Enrich reasoning with debate context
         debate_reasoning = self._debate_reasoning(
             advocate_result, skeptic_result, decision
         )
+
+        # Capture debate context for persistence
+        debate_context = {
+            "advocate": {
+                "thesis": advocate_result.thesis,
+                "direction": advocate_result.direction,
+                "confidence": advocate_result.confidence,
+            },
+            "skeptic": {
+                "thesis": skeptic_result.thesis,
+                "direction": skeptic_result.direction,
+                "confidence": skeptic_result.confidence,
+                "warnings": skeptic_result.warnings,
+            },
+            "cards_admitted": [c.card_id for c in evidence_cards if c.admitted is True],
+            "cards_rejected": [c.card_id for c in evidence_cards if c.admitted is False],
+            "instinct_cards": [
+                {"observation": c.observation, "direction": c.direction, "strength": c.strength}
+                for c in evidence_cards if c.source in ("debate_advocate", "debate_skeptic")
+            ],
+        }
 
         return AgentDecision(
             decision=decision,
@@ -150,6 +146,7 @@ class DeterministicOrchestrator:
             reasoning=f"{base_reasoning} | Debate: {debate_reasoning}",
             gate_passed=True,
             evidence_cards=evidence_cards,
+            debate=debate_context,
         )
 
     def _resolve_disputes(
@@ -223,8 +220,8 @@ class DeterministicOrchestrator:
         rejected = 0
 
         for card in cards:
-            if card.source == "gate_cri":
-                continue
+            if card.source == "gate_cri" and card.direction == "neutral":
+                continue  # Neutral gate cards (READY/MISSING) don't contribute
 
             if card.admitted is False:
                 rejected += 1
@@ -289,8 +286,8 @@ class DeterministicOrchestrator:
         rejected = 0
 
         for card in cards:
-            if card.source == "gate_cri":
-                continue  # Gate cards don't contribute to directional scoring
+            if card.source == "gate_cri" and card.direction == "neutral":
+                continue  # Neutral gate cards (READY/MISSING) don't contribute to scoring
 
             weight = self.layer_weights.get(card.layer, 0.5)
             weighted = card.strength * weight

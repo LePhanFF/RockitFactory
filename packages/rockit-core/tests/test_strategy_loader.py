@@ -19,7 +19,7 @@ from rockit_core.strategies.loader import (
 
 def test_registry_loads_all_strategies():
     classes = get_all_strategy_classes()
-    assert len(classes) == 19
+    assert len(classes) == 20
 
 
 def test_registry_keys_match_config_keys():
@@ -131,17 +131,18 @@ def test_load_core_strategies_from_config():
     assert os.path.exists(config_path), f"strategies.yaml not found at {config_path}"
 
     strategies = load_strategies_from_config(config_path)
-    assert len(strategies) == 5  # 5 core strategies enabled, rest disabled
+    assert len(strategies) == 6  # 5 core + 1 research (pdh_pdl_reaction) enabled
 
     names = {s.name for s in strategies}
     assert "80P Rule" in names
     assert "B-Day" in names
     assert "Opening Range Rev" in names
     assert "20P IB Extension" in names
+    assert "PDH/PDL Reaction" in names
 
 
 def test_load_all_strategies_from_custom_config():
-    """When all strategies are enabled, all 19 load."""
+    """When all strategies are enabled, all 20 load."""
     config = {
         'core_strategies': {key: {'enabled': True} for key in CORE_STRATEGIES},
         'research_strategies': {key: {'enabled': True} for key in RESEARCH_STRATEGIES},
@@ -149,7 +150,7 @@ def test_load_all_strategies_from_custom_config():
     path = _write_yaml_config(config)
     try:
         strategies = load_strategies_from_config(path)
-        assert len(strategies) == 19
+        assert len(strategies) == 20
     finally:
         os.unlink(path)
 

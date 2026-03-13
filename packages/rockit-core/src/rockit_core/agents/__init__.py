@@ -20,6 +20,7 @@ from rockit_core.agents.observers.momentum import MomentumObserver
 from rockit_core.agents.observers.profile import ProfileObserver
 from rockit_core.agents.orchestrator import DeterministicOrchestrator
 from rockit_core.agents.pipeline import AgentPipeline
+from rockit_core.agents.trade_reviewer import TradeReviewer
 
 __all__ = [
     "AdvocateAgent",
@@ -36,4 +37,5 @@ __all__ = [
     "OllamaClient",
     "ProfileObserver",
     "SkepticAgent",
+    "TradeReviewer",
 ]

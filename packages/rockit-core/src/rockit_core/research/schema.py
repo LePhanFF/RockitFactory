@@ -9,6 +9,7 @@ Tables:
   observations     — structured findings linked to trades/runs
   trade_assessments — per-trade AI analysis
   agent_decisions  — per-signal agent pipeline decisions (TAKE/SKIP/REDUCE_SIZE)
+  session_reviews  — per-session review analysis (human, system, or LLM)
 
 Views:
   v_trade_context      — trades JOIN session_context
@@ -189,6 +190,24 @@ TABLES = {
             PRIMARY KEY (trade_id, run_id)
         )
     """,
+    "session_reviews": """
+        CREATE TABLE IF NOT EXISTS session_reviews (
+            review_id           VARCHAR PRIMARY KEY,
+            session_date        VARCHAR NOT NULL,
+            instrument          VARCHAR DEFAULT 'NQ',
+            reviewer            VARCHAR NOT NULL,
+            user_notes          TEXT,
+            signals_fired       INTEGER,
+            signals_filtered    INTEGER,
+            trades_taken        INTEGER,
+            net_pnl             DOUBLE,
+            day_type            VARCHAR,
+            bias                VARCHAR,
+            ib_range            DOUBLE,
+            alignment_json      TEXT,
+            created_at          TIMESTAMP DEFAULT current_timestamp
+        )
+    """,
     "agent_decisions": """
         CREATE TABLE IF NOT EXISTS agent_decisions (
             decision_id         VARCHAR PRIMARY KEY,
@@ -212,6 +231,16 @@ TABLES = {
             gate_cri_status     VARCHAR,
             reasoning           VARCHAR,
             evidence_cards      JSON,
+            advocate_thesis     VARCHAR,
+            advocate_direction  VARCHAR,
+            advocate_confidence DOUBLE,
+            skeptic_thesis      VARCHAR,
+            skeptic_direction   VARCHAR,
+            skeptic_confidence  DOUBLE,
+            skeptic_warnings    JSON,
+            debate_cards_admitted JSON,
+            debate_cards_rejected JSON,
+            instinct_cards      JSON,
             actual_outcome      VARCHAR,
             actual_pnl          DOUBLE,
             was_correct         BOOLEAN,

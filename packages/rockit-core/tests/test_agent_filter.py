@@ -68,12 +68,14 @@ class TestAgentFilterDecisions:
         result = af.should_trade(_make_signal("LONG"), _make_bar(), ctx)
         assert result is True
 
-    def test_skip_returns_false(self):
-        """STAND_DOWN CRI → SKIP → should_trade returns False."""
+    def test_standdown_soft_evidence(self):
+        """STAND_DOWN CRI is soft evidence — signal still evaluated by full pipeline."""
         af = AgentFilter()
         ctx = _make_session_context(cri_status="STAND_DOWN")
         result = af.should_trade(_make_signal("LONG"), _make_bar(), ctx)
-        assert result is False
+        # CRI STAND_DOWN adds bearish weight but doesn't auto-block
+        assert len(af.decisions) == 1
+        assert af.decisions[0].gate_passed is True
 
     def test_records_decisions(self):
         """AgentFilter records all decisions for post-hoc analysis."""

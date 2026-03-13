@@ -83,11 +83,13 @@ class TestCRIGateAgent:
         assert len(cards) == 1
         assert cards[0].strength == 1.0
 
-    def test_blocks_stand_down(self):
+    def test_stand_down_soft_bearish(self):
+        """STAND_DOWN is a soft bearish signal, not a hard block."""
         ctx = {"tape_row": {"cri_status": "STAND_DOWN"}}
-        assert self.gate.passes(ctx) is False
+        assert self.gate.passes(ctx) is True  # Always passes now
         cards = self.gate.evaluate(ctx)
-        assert cards[0].strength == 0.0
+        assert cards[0].direction == "bearish"
+        assert cards[0].strength == 0.7
 
     def test_missing_data_passes(self):
         ctx = {"tape_row": {}}
@@ -96,11 +98,13 @@ class TestCRIGateAgent:
     def test_empty_context_passes(self):
         assert self.gate.passes({}) is True
 
-    def test_caution_passes_reduced(self):
+    def test_caution_soft_bearish(self):
+        """CAUTION is a softer bearish signal."""
         ctx = {"tape_row": {"cri_status": "CAUTION"}}
         assert self.gate.passes(ctx) is True
         cards = self.gate.evaluate(ctx)
-        assert cards[0].strength == 0.5
+        assert cards[0].direction == "bearish"
+        assert cards[0].strength == 0.4
 
 
 # ---------------------------------------------------------------------------
@@ -273,15 +277,16 @@ class TestDeterministicOrchestrator:
         # Conviction = |0.5 - 0.49| / (0.5 + 0.49) ≈ 0.01 < 0.1 → SKIP
         assert decision.decision == "SKIP"
 
-    def test_gate_blocked_skip(self):
-        """Gate blocked → always SKIP."""
+    def test_standdown_soft_evidence(self):
+        """STAND_DOWN contributes bearish evidence but doesn't hard-block."""
         cards = [
-            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN", "neutral", 0.0),
+            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN", "bearish", 0.7),
+            EvidenceCard("c1", "obs", "certainty", "bullish signal", "bullish", 0.8),
         ]
-        decision = self.orch.decide({"direction": "LONG"}, cards, gate_passed=False)
-        assert decision.decision == "SKIP"
-        assert decision.confidence == 1.0
-        assert decision.gate_passed is False
+        decision = self.orch.decide({"direction": "LONG"}, cards, gate_passed=True)
+        # STAND_DOWN adds bearish weight but doesn't auto-SKIP
+        assert decision.decision in ("TAKE", "SKIP", "REDUCE_SIZE")
+        assert decision.gate_passed is True
 
     def test_confluence_math(self):
         """Verify bull/bear score math."""
@@ -336,19 +341,25 @@ class TestAgentPipeline:
         assert decision.gate_passed is True
         assert len(decision.evidence_cards) > 1
 
-    def test_pipeline_stand_down_skip(self):
-        """STAND_DOWN CRI → SKIP regardless of other data."""
+    def test_pipeline_stand_down_runs_observers(self):
+        """STAND_DOWN CRI → observers still run, CRI is soft evidence."""
         pipeline = AgentPipeline()
         session_ctx = {
             "cri_status": "STAND_DOWN",
             "tpo_shape": "b_shape",
             "session_bias": "Bullish",
+            "trend_strength": "strong_bull",
+            "current_poc": 20000,
+            "current_vah": 20050,
+            "current_val": 19950,
+            "current_price": 19980,
         }
         signal_dict = {"direction": "LONG", "strategy_name": "OR Rev"}
 
         decision = pipeline.evaluate_signal(signal_dict, session_context=session_ctx)
-        assert decision.decision == "SKIP"
-        assert decision.gate_passed is False
+        # CRI is soft — observers run, more than just gate card
+        assert len(decision.evidence_cards) > 1
+        assert decision.gate_passed is True
 
     def test_pipeline_empty_context(self):
         """Empty context → pass-through (don't block on missing data)."""
@@ -442,7 +453,7 @@ class TestOllamaClient:
     def test_creation(self):
         client = OllamaClient(base_url="http://localhost:11434/v1", model="test")
         assert client.model == "test"
-        assert client.timeout == 30
+        assert client.timeout == 180
 
     def test_parse_response_valid(self):
         body = {
@@ -670,19 +681,21 @@ class TestOrchestratorWithDebate:
         assert cards[1].admitted is True
         assert cards[1].strength == pytest.approx(0.7, abs=0.01)  # 1.0 * 0.7
 
-    def test_gate_blocked_skips(self):
-        """Gate blocked → SKIP even with debate results."""
+    def test_standdown_with_debate_flows_through(self):
+        """STAND_DOWN with debate → bearish card flows into scoring, not hard block."""
         cards = [
-            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN", "neutral", 0.0),
+            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN", "bearish", 0.7),
+            EvidenceCard("c1", "obs", "certainty", "bullish", "bullish", 0.8),
         ]
-        adv = DebateResult(agent="advocate", direction="bullish", confidence=0.9)
-        skp = DebateResult(agent="skeptic", direction="neutral", confidence=0.3)
+        adv = DebateResult(agent="advocate", admit=["c1"], direction="bullish", confidence=0.8)
+        skp = DebateResult(agent="skeptic", admit=["c1"], direction="bullish", confidence=0.6)
 
         decision = self.orch.decide_with_debate(
-            {"direction": "LONG"}, cards, False, adv, skp
+            {"direction": "LONG"}, cards, True, adv, skp
         )
-        assert decision.decision == "SKIP"
-        assert decision.gate_passed is False
+        # CRI bearish card participates in scoring but doesn't hard-block
+        assert decision.decision in ("TAKE", "SKIP", "REDUCE_SIZE")
+        assert decision.gate_passed is True
 
     def test_debate_instinct_cards_admitted(self):
         """Instinct cards from debate agents are always admitted."""

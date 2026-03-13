@@ -391,6 +391,45 @@ def persist_observation(
     )
 
 
+def persist_session_review(
+    conn: duckdb.DuckDBPyConnection,
+    review: Dict[str, Any],
+) -> str:
+    """Insert a session review record. Deletes existing + re-inserts on conflict.
+
+    Returns review_id.
+    """
+    review_id = review.get("review_id", f"rev_{uuid.uuid4().hex[:10]}")
+    conn.execute("DELETE FROM session_reviews WHERE review_id = ?", [review_id])
+    conn.execute(
+        """
+        INSERT INTO session_reviews (
+            review_id, session_date, instrument, reviewer,
+            user_notes, signals_fired, signals_filtered, trades_taken,
+            net_pnl, day_type, bias, ib_range, alignment_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            review_id,
+            review.get("session_date", ""),
+            review.get("instrument", "NQ"),
+            review.get("reviewer", "system"),
+            review.get("user_notes"),
+            review.get("signals_fired", 0),
+            review.get("signals_filtered", 0),
+            review.get("trades_taken", 0),
+            review.get("net_pnl", 0.0),
+            review.get("day_type"),
+            review.get("bias"),
+            review.get("ib_range"),
+            json.dumps(review["alignment"], default=_json_default)
+            if review.get("alignment")
+            else None,
+        ],
+    )
+    return review_id
+
+
 def persist_agent_decision(
     conn: duckdb.DuckDBPyConnection,
     decision_id: str,
@@ -404,6 +443,22 @@ def persist_agent_decision(
     evidence_json = json.dumps(
         decision_data.get("evidence_cards", []), default=_json_default
     )
+    # Debate context (Advocate/Skeptic reasoning — may be absent for non-debate runs)
+    debate = decision_data.get("debate", {}) or {}
+    advocate = debate.get("advocate", {}) or {}
+    skeptic = debate.get("skeptic", {}) or {}
+    skeptic_warnings_json = json.dumps(
+        skeptic.get("warnings", []), default=_json_default
+    )
+    admitted_json = json.dumps(
+        debate.get("cards_admitted", []), default=_json_default
+    )
+    rejected_json = json.dumps(
+        debate.get("cards_rejected", []), default=_json_default
+    )
+    instinct_json = json.dumps(
+        debate.get("instinct_cards", []), default=_json_default
+    )
     conn.execute(
         """
         INSERT INTO agent_decisions (
@@ -413,7 +468,12 @@ def persist_agent_decision(
             bull_score, bear_score, conviction,
             total_evidence, bull_cards, bear_cards,
             gate_passed, gate_cri_status, reasoning,
-            evidence_cards, actual_outcome, actual_pnl, was_correct
+            evidence_cards,
+            advocate_thesis, advocate_direction, advocate_confidence,
+            skeptic_thesis, skeptic_direction, skeptic_confidence,
+            skeptic_warnings, debate_cards_admitted, debate_cards_rejected,
+            instinct_cards,
+            actual_outcome, actual_pnl, was_correct
         ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?,
@@ -421,7 +481,12 @@ def persist_agent_decision(
             ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?,
-            ?, ?, ?, ?
+            ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?,
+            ?, ?, ?
         )
         """,
         [
@@ -446,6 +511,16 @@ def persist_agent_decision(
             decision_data.get("gate_cri_status"),
             decision_data.get("reasoning"),
             evidence_json,
+            advocate.get("thesis"),
+            advocate.get("direction"),
+            advocate.get("confidence"),
+            skeptic.get("thesis"),
+            skeptic.get("direction"),
+            skeptic.get("confidence"),
+            skeptic_warnings_json,
+            admitted_json,
+            rejected_json,
+            instinct_json,
             decision_data.get("actual_outcome"),
             decision_data.get("actual_pnl"),
             decision_data.get("was_correct"),

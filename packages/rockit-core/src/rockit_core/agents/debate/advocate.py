@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 
 from rockit_core.agents.base import AgentBase
+from rockit_core.agents.debate.json_repair import extract_json
 from rockit_core.agents.evidence import DebateResult, EvidenceCard
 from rockit_core.agents.llm_client import OllamaClient
 
@@ -35,7 +36,7 @@ def _load_system_prompt() -> str:
 class AdvocateAgent(AgentBase):
     """LLM-powered agent that builds the case for a trade signal."""
 
-    def __init__(self, llm_client: OllamaClient, max_tokens: int = 4000):
+    def __init__(self, llm_client: OllamaClient, max_tokens: int = 8000):
         self._llm = llm_client
         self._max_tokens = max_tokens
         self._system_prompt = _load_system_prompt()
@@ -57,7 +58,10 @@ class AdvocateAgent(AgentBase):
         return result.instinct_cards
 
     def debate(self, context: dict) -> DebateResult:
-        """Full debate — returns DebateResult with admit/reject/instinct/thesis."""
+        """Full debate — returns DebateResult with admit/reject/instinct/thesis.
+
+        Includes retry on JSON parse failure.
+        """
         evidence_cards: list[EvidenceCard] = context.get("evidence_cards", [])
         signal = context.get("signal", {})
         session_ctx = context.get("session_context", {})
@@ -70,7 +74,28 @@ class AdvocateAgent(AgentBase):
             logger.warning("Advocate LLM error: %s", response["error"])
             return DebateResult(agent="advocate", raw_response=str(response))
 
-        return self._parse_response(response.get("content", ""), evidence_cards)
+        content = response.get("content", "")
+        reasoning = response.get("reasoning", "")
+        result = self._parse_response(content, reasoning, evidence_cards)
+
+        # Retry once if parse failed (empty instinct_cards + empty thesis = likely failed)
+        if not result.thesis and not result.instinct_cards and content:
+            logger.info("Advocate: first parse failed, retrying with repair prompt")
+            retry_prompt = (
+                "Your previous response was not valid JSON. "
+                "Output ONLY a valid JSON object with keys: "
+                "admit, reject, instinct_cards, thesis, direction, confidence, warnings. "
+                "No markdown, no explanation.\n\nOriginal input:\n" + user_prompt
+            )
+            response = self._llm.chat(self._system_prompt, retry_prompt, self._max_tokens)
+            if not response.get("error"):
+                result = self._parse_response(
+                    response.get("content", ""),
+                    response.get("reasoning", ""),
+                    evidence_cards,
+                )
+
+        return result
 
     def _build_prompt(
         self,
@@ -121,21 +146,14 @@ class AdvocateAgent(AgentBase):
         return json.dumps(prompt_data, indent=2)
 
     def _parse_response(
-        self, content: str, evidence_cards: list[EvidenceCard]
+        self, content: str, reasoning: str, evidence_cards: list[EvidenceCard]
     ) -> DebateResult:
-        """Parse LLM JSON response into DebateResult."""
-        try:
-            # Strip markdown code fences if present
-            cleaned = content.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.split("\n")
-                # Remove first and last lines (```json and ```)
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                cleaned = "\n".join(lines)
+        """Parse LLM JSON response into DebateResult with robust extraction."""
+        data = extract_json(content, reasoning)
 
-            data = json.loads(cleaned)
-        except (json.JSONDecodeError, TypeError) as exc:
-            logger.warning("Advocate response not valid JSON: %s", exc)
+        if data is None:
+            logger.warning("Advocate response: JSON extraction failed (content=%d chars, reasoning=%d chars)",
+                          len(content), len(reasoning))
             return DebateResult(agent="advocate", raw_response=content)
 
         # Parse instinct cards

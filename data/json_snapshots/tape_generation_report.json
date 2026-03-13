@@ -1,9 +1,9 @@
 {
-  "sessions": 8,
-  "snapshots": 624,
+  "sessions": 1,
+  "snapshots": 78,
   "errors": 0,
   "validation_errors": 0,
   "validation_warnings": 0,
-  "elapsed": 1876.8472318649292,
+  "elapsed": 261.8864412307739,
   "failed_sessions": []
 }

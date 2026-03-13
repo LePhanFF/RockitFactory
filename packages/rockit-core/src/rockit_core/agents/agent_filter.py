@@ -47,6 +47,16 @@ class AgentFilter(FilterBase):
 
         bar_dict = bar.to_dict() if isinstance(bar, pd.Series) else (bar or {})
         decision = self._pipeline.evaluate_signal(signal_dict, bar_dict, session_context)
+
+        # Attach signal metadata so persistence can extract it later
+        decision.signal_metadata = {
+            "strategy_name": signal.strategy_name,
+            "setup_type": signal.setup_type,
+            "signal_direction": signal.direction,
+            "session_date": session_context.get("session_date", "") if session_context else "",
+            "signal_time": str(signal.timestamp) if signal.timestamp else "",
+        }
+
         self._decisions.append(decision)
 
         return decision.decision in ("TAKE", "REDUCE_SIZE")

@@ -114,15 +114,12 @@ def get_mechanical_filters():
         {"strategy": "80P Rule", "blocked_day_types": ["neutral", "neutral_range", "Neutral Range"]},
         {"strategy": "B-Day", "blocked_day_types": ["trend_up", "trend_down", "Trend Up", "Trend Down"]},
     ]
-    anti_chase_rules = [
-        {"strategy": "80P Rule",
-         "block_long_when_bias": ["Bullish", "BULL", "Very Bullish"],
-         "block_short_when_bias": ["Bearish", "BEAR", "Very Bearish"]},
-    ]
+    # AntiChase removed for 80P — investigation showed it killed 53/72 signals
+    # including profitable SHORT+Bearish setups (67% WR, +$27K in baseline).
+    # 80P is a mean-reversion strategy; trading WITH bias is legitimate, not chasing.
     return [
         BiasAlignmentFilter(neutral_passes=True),
         DayTypeGateFilter(rules=bias_rules),
-        AntiChaseFilter(rules=anti_chase_rules),
     ]
 
 
@@ -214,7 +211,7 @@ def persist_agent_decisions_with_outcomes(conn, agent_filter, run_id, result):
     if not agent_filter or not hasattr(agent_filter, 'decisions'):
         return 0
 
-    # Build trade lookup by (strategy, session_date, approximate time)
+    # Build trade lookup by (strategy, session_date) for outcome matching
     trade_lookup = {}
     for t in result.trades:
         key = (t.strategy_name, t.session_date)
@@ -222,29 +219,46 @@ def persist_agent_decisions_with_outcomes(conn, agent_filter, run_id, result):
 
     count = 0
     for decision in agent_filter.decisions:
-        signal = decision.evidence_cards[0].raw_data if decision.evidence_cards else {}
-        strategy = ""
-        signal_dir = ""
-        session_date = ""
-        signal_time = ""
-
-        # Extract from the decision's confluence cards or reasoning
-        for card in decision.evidence_cards:
-            if card.raw_data.get("signal_direction"):
-                signal_dir = card.raw_data["signal_direction"]
-            if card.raw_data.get("cri_status") is not None:
-                pass  # gate card
-
-        # Try to get strategy info from the signal used to create this decision
-        # The orchestrator stores the signal_dict info in reasoning
         dec_dict = decision.to_dict()
 
-        decision_id = f"{run_id}_{uuid.uuid4().hex[:8]}"
-        dec_dict["session_date"] = session_date
-        dec_dict["signal_time"] = signal_time
-        dec_dict["strategy_name"] = dec_dict.get("strategy_name", "unknown")
-        dec_dict["signal_direction"] = signal_dir
+        # Extract signal metadata (attached by AgentFilter.should_trade)
+        meta = getattr(decision, 'signal_metadata', {})
+        strategy = meta.get("strategy_name", "unknown")
+        session_date = meta.get("session_date", "")
+        signal_dir = meta.get("signal_direction", "")
+        signal_time = meta.get("signal_time", "")
 
+        dec_dict["strategy_name"] = strategy
+        dec_dict["session_date"] = session_date
+        dec_dict["signal_direction"] = signal_dir
+        dec_dict["signal_time"] = signal_time
+        dec_dict["setup_type"] = meta.get("setup_type", "")
+
+        # Match to actual trade outcome (if TAKE → find the trade)
+        actual_outcome = None
+        actual_pnl = None
+        was_correct = None
+        trade_key = (strategy, session_date)
+        if trade_key in trade_lookup:
+            matching_trades = trade_lookup[trade_key]
+            if matching_trades:
+                trade = matching_trades[0]
+                actual_outcome = "WIN" if trade.net_pnl > 0 else "LOSS"
+                actual_pnl = trade.net_pnl
+                if decision.decision == "TAKE":
+                    was_correct = trade.net_pnl > 0
+                elif decision.decision == "SKIP":
+                    was_correct = trade.net_pnl <= 0  # Correct skip = avoided a loss
+
+        dec_dict["actual_outcome"] = actual_outcome
+        dec_dict["actual_pnl"] = actual_pnl
+        dec_dict["was_correct"] = was_correct
+
+        # Include trade_id if matched
+        if trade_key in trade_lookup and trade_lookup[trade_key]:
+            dec_dict["trade_id"] = trade_lookup[trade_key][0].trade_id
+
+        decision_id = f"{run_id}_{uuid.uuid4().hex[:8]}"
         persist_agent_decision(conn, decision_id, run_id, dec_dict)
         count += 1
 

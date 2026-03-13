@@ -2,8 +2,9 @@
 CRI Gate Agent — readiness check before observer evaluation.
 
 Reads CRI (Confirmation/Readiness/Inflection) status from the deterministic
-tape and blocks STAND_DOWN signals. Missing CRI data passes through
-(don't block on missing data).
+tape. CRI is a SOFT evidence card — STAND_DOWN produces a strong bearish
+signal (0.7) but does NOT block the pipeline. Observers and LLM debate
+always run regardless of CRI status.
 """
 
 from __future__ import annotations
@@ -51,32 +52,28 @@ class CRIGateAgent(AgentBase):
                     card_id="gate_cri_standdown",
                     source="gate_cri",
                     layer="certainty",
-                    observation=f"CRI status: STAND_DOWN — blocking signal",
-                    direction="neutral",
-                    strength=0.0,
+                    observation=f"CRI status: STAND_DOWN — soft bearish signal",
+                    direction="bearish",
+                    strength=0.7,
                     data_points=1,
                     raw_data={"cri_status": cri_status},
                 )
             ]
 
-        # Any other status (e.g., CAUTION) — pass through with reduced strength
+        # Any other status (e.g., CAUTION) — bearish with reduced strength
         return [
             EvidenceCard(
                 card_id=f"gate_cri_{cri_status.lower()}",
                 source="gate_cri",
                 layer="certainty",
                 observation=f"CRI status: {cri_status}",
-                direction="neutral",
-                strength=0.5,
+                direction="bearish",
+                strength=0.4,
                 data_points=1,
                 raw_data={"cri_status": cri_status},
             )
         ]
 
     def passes(self, context: dict) -> bool:
-        """Convenience: does the gate allow this signal through?"""
-        cards = self.evaluate(context)
-        if not cards:
-            return True
-        # STAND_DOWN has strength 0.0
-        return cards[0].strength > 0.0
+        """Convenience: CRI is soft evidence — always passes."""
+        return True

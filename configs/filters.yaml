@@ -16,11 +16,10 @@ pipeline:
         blocked_day_types: [trend_up, trend_down, "Trend Up", "Trend Down"]
 
   anti_chase:
-    enabled: true
-    rules:
-      - strategy: "80P Rule"
-        block_long_when_bias: [Bullish, BULL, "Very Bullish"]
-        block_short_when_bias: [Bearish, BEAR, "Very Bearish"]
+    enabled: false  # Disabled — killed 53/72 80P signals including profitable setups (Run E finding)
+    # 80P is mean-reversion; trading WITH bias is legitimate, not chasing.
+    # Let the LLM debate layer handle nuanced signal filtering instead.
+    rules: []
 
   agent_evaluation:
     enabled: false  # Enable via A/B test script, not by default

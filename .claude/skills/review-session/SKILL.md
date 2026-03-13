@@ -326,6 +326,91 @@ If the review file doesn't exist, create it with a template:
 [Generated content]
 ```
 
+### Step 9.5: Persist Review to DuckDB
+
+After generating the analysis, persist the session review and any observations to DuckDB so they feed into future agent debates.
+
+```bash
+uv run python -c "
+import sys, json, uuid; sys.path.insert(0, 'packages/rockit-core/src')
+from rockit_core.research.db import connect, persist_session_review, persist_observation
+
+conn = connect()
+
+# 1. Persist session review
+review = {
+    'review_id': 'rev_{DATE}_{INSTRUMENT}',
+    'session_date': '{DATE}',
+    'instrument': '{INSTRUMENT}',
+    'reviewer': 'human' if HAS_USER_NOTES else 'system',
+    'user_notes': USER_NOTES_TEXT or None,
+    'signals_fired': SIGNALS_FIRED,
+    'signals_filtered': SIGNALS_FILTERED,
+    'trades_taken': TRADES_TAKEN,
+    'net_pnl': NET_PNL,
+    'day_type': DAY_TYPE,
+    'bias': BIAS,
+    'ib_range': IB_RANGE,
+    'alignment': {
+        'aligned': [...],      # list of aligned observations
+        'system_gap': [...],   # things user saw, system doesn't track
+        'user_gap': [...],     # things system caught, user missed
+        'disagreement': [...]  # conflicting reads
+    }
+}
+persist_session_review(conn, review)
+
+# 2. Persist observations from user notes (source='human_review')
+# For each meaningful observation from user notes:
+for obs_text in USER_OBSERVATIONS:
+    persist_observation(conn, {
+        'obs_id': f'hr_{DATE}_{uuid.uuid4().hex[:6]}',
+        'scope': 'session',
+        'strategy': RELEVANT_STRATEGY or None,
+        'session_date': '{DATE}',
+        'observation': obs_text,
+        'evidence': 'User session review notes',
+        'source': 'human_review',
+        'confidence': 0.7,
+    })
+
+# 3. Persist system-generated observations (source='system_review')
+# For each key takeaway from system analysis:
+for takeaway in SYSTEM_TAKEAWAYS:
+    persist_observation(conn, {
+        'obs_id': f'sr_{DATE}_{uuid.uuid4().hex[:6]}',
+        'scope': 'session',
+        'strategy': RELEVANT_STRATEGY or None,
+        'session_date': '{DATE}',
+        'observation': takeaway,
+        'evidence': 'System session review analysis',
+        'source': 'system_review',
+        'confidence': 0.6,
+    })
+
+conn.close()
+print('Persisted review + observations to DuckDB')
+"
+```
+
+**Variable substitutions** (fill from analysis results):
+- `{DATE}` — session date (YYYY-MM-DD)
+- `{INSTRUMENT}` — instrument (default NQ)
+- `HAS_USER_NOTES` — True if review file existed with user content
+- `USER_NOTES_TEXT` — raw user notes text
+- `SIGNALS_FIRED` — total signals from Pass A
+- `SIGNALS_FILTERED` — signals filtered in Pass B
+- `TRADES_TAKEN` — trades in Pass B
+- `NET_PNL` — total PnL from Pass B
+- `DAY_TYPE` — final day type classification
+- `BIAS` — session bias
+- `IB_RANGE` — IB range in points
+- `USER_OBSERVATIONS` — list of meaningful observations extracted from user notes
+- `SYSTEM_TAKEAWAYS` — list of key takeaways from system analysis
+- `RELEVANT_STRATEGY` — strategy name if observation is strategy-specific
+
+These observations automatically feed into future Advocate/Skeptic debates via `_query_historical()`.
+
 ## Notes
 - All commands use `uv run` (not bare python)
 - Always use `encoding='utf-8'` for file I/O

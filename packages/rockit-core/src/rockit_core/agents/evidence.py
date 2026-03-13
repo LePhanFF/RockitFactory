@@ -60,11 +60,12 @@ class AgentDecision:
     reasoning: str
     gate_passed: bool
     evidence_cards: list[EvidenceCard] = field(default_factory=list)
+    debate: dict | None = None  # Advocate/Skeptic results for persistence
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
         """Serialize for JSON/DuckDB storage."""
-        return {
+        result = {
             "decision": self.decision,
             "confidence": self.confidence,
             "direction": self.direction,
@@ -87,10 +88,14 @@ class AgentDecision:
                     "direction": c.direction,
                     "strength": c.strength,
                     "data_points": c.data_points,
+                    "admitted": c.admitted,
                 }
                 for c in self.evidence_cards
             ],
         }
+        if self.debate:
+            result["debate"] = self.debate
+        return result
 
 
 @dataclass

@@ -888,73 +888,465 @@ The data warehouse IS the proven ground. Agents calibrated from it have measurab
 
 ### 2.7 Trendline Analysis (3rd Touch, Backside, Break + Retest)
 
-**What**: Algorithmic trendline detection and interaction tracking. Key events: 3rd touch (confirmation), backside test (support becomes resistance), and break + retest.
+> **Status**: TODO — HIGH PRIORITY (user uses trendline 3rd touch as a core entry signal)
+> **Date updated**: 2026-03-12
+> **Evidence**: User identified "3rd touch of trendline" as a key reversal signal on 2026-03-12 (London Low rejection). Flagged as SYSTEM GAP in session reviews for both 2026-03-11 and 2026-03-12.
 
-**Detection approach** (research needed):
-- Connect 2+ swing lows (ascending trendline) or 2+ swing highs (descending trendline)
-- Use linear regression on swing points with tolerance band
-- Track touch count — 3rd touch is the classic confirmation/reversal point
-- After a break: monitor for "backside" test (old support → new resistance)
+**What**: Algorithmic trendline detection and interaction tracking. Key events: 3rd touch (confirmation/reversal), backside test (support becomes resistance), and break + retest.
 
-**Key events to detect**:
-1. **Trendline formation**: 2 swing points connected, slope calculated
-2. **3rd touch approaching**: Price within 0.3 ATR of trendline
-3. **3rd touch confirmed**: Price touched and bounced (continuation) or broke through (reversal)
-4. **Trendline break**: Price closes beyond trendline (not just wick)
-5. **Backside retest**: After break, price returns to test the trendline from the other side
+**How the user draws trendlines** (this is what we need to replicate):
+- Connect **wicks** (highs or lows), NOT closes — the extremes matter, not the bodies
+- **Ascending trendline**: Connect 2+ higher lows (wick lows) → draw line through them → project forward
+- **Descending trendline**: Connect 2+ lower highs (wick highs) → draw line through them → project forward
+- **Timeframes**: 5-min, 15-min, 1H, 4H, daily — all valid. Intraday trendlines on 5/15min are most actionable for day trading. HTF (1H, 4H, daily) provide context/confluence.
+- **3rd touch = the trade**: When price approaches the trendline for the 3rd time, it's either a high-probability bounce (continuation) or a high-probability break (reversal). Either way, it's actionable.
 
-**Output**:
+#### The 3rd Touch Study (Backtest Research)
+
+> **Goal**: Quantify the edge of trendline 3rd touches across 270 sessions. Does the 3rd touch predict reversals or continuations? What's the WR by timeframe?
+
+**Study design**:
+1. Detect all trendlines on 5min, 15min, 1H timeframes across 270 NQ sessions
+2. For each trendline that reaches 3+ touches, record:
+   - Touch number (3rd, 4th, 5th...)
+   - Outcome: **bounce** (continuation in trendline direction) or **break** (price closes through)
+   - If bounce: how far did price move in the bounce direction? (MFE)
+   - If break: how far did price move through? Was there a backside retest?
+   - Context at touch time: day type, bias, IB range, delta, time of day
+3. Build a "3rd touch signal" and backtest:
+   - Entry: At trendline touch with rejection candle confirmation
+   - Direction: Same as trendline direction (ascending TL → LONG on 3rd touch, descending TL → SHORT)
+   - Stop: Beyond the trendline (break would invalidate)
+   - Target: Prior swing high/low or fixed R:R
+
+**Key questions**:
+- What % of 3rd touches produce bounces vs breaks? (hypothesis: >60% bounce)
+- Does timeframe matter? (15min trendline 3rd touch more reliable than 5min?)
+- Does confluence with other levels improve accuracy? (3rd touch AT London High = stronger signal)
+- Can we combine 3rd touch with IB Retracement? (retracement to 50-61.8% zone that ALSO aligns with a trendline = high conviction)
+
+#### Detection Approach
+
+**Step 1: Swing Point Detection** (dependency on 2.6)
+- Detect swing highs and swing lows using N-bar lookback fractals
+- Use WICKS (high for swing highs, low for swing lows), not closes
+- Configurable lookback: 3 bars for 5min, 5 bars for 15min, 8 bars for 1H
+- Minimum swing size: > 0.3× ATR to filter noise
+
+**Step 2: Trendline Fitting**
+```python
+def detect_trendlines(swing_points, timeframe, direction):
+    """
+    Connect swing lows (ascending) or swing highs (descending).
+    Use wick prices, not closes.
+
+    Algorithm (swing-to-swing, simplest and most accurate for this use case):
+    1. For each pair of swing lows (ascending) or swing highs (descending):
+       a. Draw a line through the two points
+       b. Project forward
+       c. Check if any subsequent swing points touch the line (within tolerance)
+       d. Count touches
+       e. Reject if any candle CLOSES beyond the line between touches (broken)
+    2. Rank trendlines by: touch_count (more = stronger), recency, slope consistency
+    3. Keep top N active trendlines (avoid clutter)
+
+    Tolerance for "touch":
+    - Price wick within 0.2× ATR of the projected trendline value at that bar
+    - OR within 5 points (NQ), whichever is larger
+    - Must not double-count: touches must be separated by >= 3 bars
+    """
+```
+
+**Step 3: Touch Event Tracking**
+```python
+@dataclass
+class TrendlineTouch:
+    trendline_id: str
+    touch_number: int          # 1st, 2nd, 3rd...
+    touch_time: str
+    touch_price: float         # wick price that touched
+    trendline_price: float     # projected line value at that time
+    distance_pts: float        # how close the wick got
+    outcome: str               # 'bounce' | 'break' | 'pending'
+    bounce_mfe: float          # max move in bounce direction (pts)
+    break_distance: float      # if broke, how far through (pts)
+    rejection_candle: bool     # was the touch bar a rejection pattern?
+    context: dict              # day_type, bias, IB status, delta, etc.
+```
+
+**Step 4: Real-Time 3rd Touch Alert**
+```python
+def check_approaching_3rd_touch(bar, active_trendlines):
+    """
+    At each bar, check if price is approaching any 2-touch trendline.
+
+    Alert when:
+    - Trendline has exactly 2 confirmed touches
+    - Current price is within 1.0× ATR of projected trendline value
+    - Price is moving TOWARD the trendline (closing the distance)
+
+    This is the "3rd touch approaching" signal that the agent pipeline
+    can evaluate — should we expect a bounce or a break?
+    """
+```
+
+**Step 5: No Lookahead (Critical for Backtesting)**
+- Trendline is only "valid" after 2nd touch is confirmed
+- 3rd touch signal fires when price APPROACHES — decision made before outcome known
+- Cannot use future bars to determine if a touch will bounce or break
+- Rolling window: at each bar, maintain list of currently-valid trendlines
+- Invalidation: trendline broken (close beyond) → remove from active list
+
+#### Multi-Timeframe Approach
+
+The same algorithm runs on different bar sizes:
+
+| Timeframe | Bar Source | Swing Lookback | Min Swing Size | Touch Tolerance | Use Case |
+|-----------|-----------|---------------|----------------|-----------------|----------|
+| 5-min | Resample 1-min → 5-min | 3 bars (15 min) | 15 pts | 0.15× ATR or 5 pts | Intraday precision entries |
+| 15-min | Resample 1-min → 15-min | 5 bars (75 min) | 30 pts | 0.20× ATR or 8 pts | Primary intraday trendlines |
+| 1-hour | Resample 1-min → 60-min | 5 bars (5 hours) | 60 pts | 0.25× ATR or 15 pts | Session-level structure |
+| 4-hour | Requires multi-session data | 5 bars (20 hours) | 100 pts | 0.30× ATR or 20 pts | Multi-day context |
+| Daily | Requires multi-session data | 5 bars (1 week) | 150 pts | 0.30× ATR or 30 pts | Weekly trend structure |
+
+**Intraday priority**: 15-min is likely the sweet spot — long enough to filter noise, short enough to catch intraday trendlines that matter for 10:00-12:00 trading.
+
+#### Output Schema
+
 ```python
 {
     "active_trendlines": [
         {
-            "type": "ascending",        # ascending / descending
+            "id": "tl_15m_asc_0945_1015",
+            "type": "ascending",              # ascending / descending
+            "timeframe": "15min",
             "anchor_points": [
-                {"price": 21300, "time": "09:45"},
-                {"price": 21380, "time": "10:15"},
+                {"price": 21300, "time": "09:45", "type": "swing_low"},
+                {"price": 21380, "time": "10:15", "type": "swing_low"},
             ],
-            "slope_per_bar": 2.67,      # points per 5-min bar
+            "slope_per_bar": 5.33,            # points per bar
+            "slope_per_hour": 21.33,          # points per hour (normalized)
             "touch_count": 2,
-            "current_trendline_price": 21420.0,  # projected current value
-            "price_distance": 30.0,     # current price - trendline price
-            "price_distance_atr_pct": 0.2,  # distance as % of ATR
-            "status": "active",         # active / broken / retesting
+            "current_trendline_price": 21420.0,
+            "price_distance": 30.0,           # current wick - trendline
+            "price_distance_atr_pct": 0.2,
+            "status": "active",               # active / broken / retesting
             "approaching_3rd_touch": True,
+            "bars_since_last_touch": 8,
+            "strength": 0.75,                 # composite: touches × recency × slope consistency
         }
     ],
     "recent_events": [
-        {"event": "3rd_touch_approaching", "trendline_idx": 0, "time": "11:00"},
+        {
+            "event": "3rd_touch_approaching",
+            "trendline_id": "tl_15m_asc_0945_1015",
+            "time": "11:00",
+            "projected_touch_price": 21450.0,
+            "distance_remaining": 12.0,
+        },
+        {
+            "event": "3rd_touch_confirmed",
+            "trendline_id": "tl_15m_asc_0945_1015",
+            "time": "11:05",
+            "touch_price": 21448.0,
+            "rejection_candle": True,
+            "outcome": "bounce",
+        },
     ],
 }
 ```
 
-**Dependencies**: Requires swing point detection (2.6) for anchor points.
+#### Integration with Agent Pipeline
 
-**Research questions**:
-- Best algorithm for real-time trendline fitting (Hough transform? Iterative RANSAC? Simple swing-to-swing?)
-- How to handle multiple valid trendlines (pick steepest? most touches?)
-- Timeframe: probably 15min and 1H only (5min too noisy, 4H too slow for intraday)
-- Tolerance for "touch" — wick vs close vs within N ticks?
+The 3rd touch approaching event feeds directly into the agent pipeline:
+
+```
+Trendline module detects "3rd touch approaching" on 15-min descending trendline
+  → Creates evidence card: {category: "trendline", direction: "bearish", strength: 0.8,
+     summary: "3rd touch of 15-min descending trendline at 24903, price 12 pts away"}
+  → If aligned with IB Retracement zone: confluence boost (+0.2 strength)
+  → If aligned with London level: confluence boost (+0.15 strength)
+  → Advocate/Skeptic debate: "3rd touch + London rejection + IB retrace zone = high conviction SHORT"
+```
+
+**This is the missing piece from 2026-03-12**: You saw the 3rd touch of the descending trendline at London Low, the system saw nothing. With this module, the agent would have generated a bearish evidence card that could have helped SKIP the losing 20P trade (which was trying to extend SHORT past an exhaustion point where the trendline said "no more").
+
+#### Research Agent Findings (2026-03-12)
+
+> Research complete. Key recommendations below. Full pseudocode and references in research output.
+
+**Best Algorithm: Iterative Swing-to-Swing (Recommended)**
+
+The research evaluated 3 approaches:
+1. **Iterative swing-to-swing** — RECOMMENDED. Maps directly to how you draw trendlines. Connect each pair of swing lows (ascending) or swing highs (descending), validate no close breaches in between, count touches. O(S²×N) where S=10-30 swings per session. Fast enough (~2-3 sec/session).
+2. **RANSAC (sklearn)** — Good for noisy data, finds best-fit line ignoring outliers. But finds ONE line at a time, needs iterative removal.
+3. **Hough Transform (trendln library)** — Finds ALL lines at once. But operates on full series = **lookahead bias**. Not safe for bar-by-bar backtesting.
+
+**Swing Detection: Causal Rolling Window (No Lookahead)**
+
+```python
+def detect_swing_points_causal(df, left=5, right=2):
+    """
+    Uses WICKS (high/low), not closes.
+    left=5: looks back 5 bars. right=2: needs 2 bars of confirmation.
+    Swing at bar i is confirmed and actionable at bar i+right.
+    NO lookahead.
+    """
+    for i in range(left, len(df) - right):
+        window_high = df['high'].values[i - left : i + right + 1]
+        if df['high'].values[i] == window_high.max():
+            swing_highs.append(i)  # confirmed at bar i+right
+
+        window_low = df['low'].values[i - left : i + right + 1]
+        if df['low'].values[i] == window_low.min():
+            swing_lows.append(i)  # confirmed at bar i+right
+```
+
+**Tuning by timeframe**:
+
+| Timeframe | swing_left | swing_right | min_touch_gap | touch_tolerance | TF weight |
+|-----------|-----------|-------------|---------------|-----------------|-----------|
+| 5-min | 5 (25 min) | 2 (10 min) | 3 bars (15 min) | 0.15× ATR or 5 pts | 0.5 |
+| 15-min | 4 (60 min) | 2 (30 min) | 2 bars (30 min) | 0.20× ATR or 8 pts | 0.7 |
+| 1-hour | 3 (3 hr) | 2 (2 hr) | 2 bars (2 hr) | 0.25× ATR or 15 pts | 1.0 |
+| 4-hour | 2 (8 hr) | 1 (4 hr) | 1 bar (4 hr) | 0.30× ATR or 20 pts | 1.3 |
+| Daily | 3 (3 day) | 2 (2 day) | 1 bar (1 day) | 0.30× ATR or 30 pts | 1.5 |
+
+**Touch Counting Anti-Double-Count**: Touches within `min_touch_gap` bars are merged. Prevents counting 3 bars hugging the line as 3 separate touches.
+
+**Bounce vs Break Classification**: After touch detected, wait `confirm_bars=2` bars. All closes stay on the right side = bounce. All closes cross = break. Mixed = contested (wait).
+
+**Rejection Pattern Scoring** at 3rd touch:
+- Long lower wick (>50% of range) at ascending trendline = +0.4
+- Close near bar high = +0.3
+- Bullish engulfing = +0.3
+- Score > 0.6 = strong rejection confirmation
+
+**Avoiding Lookahead — Critical Rules**:
+
+| Concern | Solution |
+|---------|----------|
+| Swing confirmation | Swing at bar `i` actionable at bar `i + swing_right` only |
+| Trendline creation | Only when 2nd anchor swing is confirmed |
+| Touch detection | Bar-by-bar, only data up to current bar |
+| Higher TF data | Only process after bar closes (15-min bar at :15, :30, :45, :00) |
+| **trendln / pytrendline** | **NOT safe** for backtesting — operate on full series |
+
+**Implementation Target**: New deterministic module at `rockit_core/deterministic/modules/trendline_detection.py`. Same pattern as `fvg_detection.py` — resample internally to 5min/15min/1H, run detection, return dict.
+
+**Libraries**: Only need numpy + pandas + scipy (already in stack). `trendln` useful for offline visualization only, NOT for backtest.
+
+**Performance**: ~2-3 sec/session for 270 sessions across all timeframes. Not blocking.
+
+**Trendline Ranking** (when multiple valid lines exist):
+- Touch count × 20 (more touches = stronger)
+- Recency bonus: max(0, 50 - age_in_bars)
+- Timeframe weight multiplier (daily=1.5×, 15min=0.7×)
+- Regularity: evenly-spaced touches score higher (coefficient of variation penalty)
+- Moderate slope bonus (very steep or very flat = weaker)
+
+**Key References**:
+- `scipy.signal.argrelextrema` — fast swing detection (needs lookahead offset for backtest use)
+- `pytrendline` — exhaustive scan with scoring (study the algorithm, don't use the library in production)
+- `freqtrade/technical/trendline.py` — production trendline code in a real trading bot
+- `sklearn.linear_model.RANSACRegressor` — robust fitting through noisy swings
+
+**Dependencies**: Requires swing point detection (2.6) for anchor points.
 
 ### 2.8 Implementation Priority
 
-These three modules build on each other:
+These modules build on each other:
 
 ```
-2.6 Swing Points  ──→  2.7 Trendlines  ──→  feeds into all pattern detection
+2.6 Swing Points  ──→  2.7 Trendlines + 3rd Touch Study  ──→  feeds into all pattern detection
+        │                        │
+        │                        └──→  IB Retracement (trendline confluence)
         │
         └──→  2.5 SMT Divergence (requires swing points on multiple instruments)
 ```
 
 **Recommended order**:
 1. **Swing points first** (2.6) — foundational, everything else needs it
-2. **Trendlines second** (2.7) — depends on swing points
+2. **Trendlines + 3rd touch study** (2.7) — depends on swing points. HIGH PRIORITY — user trades this daily
 3. **SMT last** (2.5) — depends on swing points + multi-instrument data
 
 **Data requirements**:
 - Swing points: Current instrument only, uses existing 1-min bars
-- Trendlines: Current instrument only, uses swing points
+- Trendlines: Current instrument only, uses swing points. Needs resampled bars (5min, 15min, 1H)
 - SMT: Needs ES + YM data loaded alongside NQ (requires multi-instrument loader enhancement)
+
+---
+
+## NEW STRATEGY: IB Retracement Entry (50-61.8% Fib of IB Range)
+
+> **Status**: TODO — HIGH PRIORITY (user trades this consistently and profitably)
+> **Date added**: 2026-03-12
+> **Evidence**: User executed this on both 2026-03-11 and 2026-03-12 with winning results. Identified as SYSTEM GAP in session reviews.
+
+### Concept
+
+After the Initial Balance (IB) forms at 10:30, wait for price to retrace 50-61.8% of the IB range in the direction of the impulsive move, then enter in the impulse direction.
+
+**The setup**:
+1. IB forms with a clear directional impulse (not a tight rotation)
+2. One side of the IB was created by an impulsive move (sweep of London high/low, OR extension, etc.)
+3. Price retraces to the 50-61.8% fib of the IB range (or to VAH/VWAP if those levels coincide)
+4. Enter in the direction of the impulse, targeting IB low/high extension or lower/higher discovery
+
+**Example (2026-03-11)**:
+- IB formed with extreme range (201 pts), impulse was SHORT (London High rejected, swept down)
+- User waited for 50% retracement of IB range (price swept above VWAP, failed back down)
+- Shorted at 50-61.8% zone → target IB LOW → WIN
+
+**Example (2026-03-12)**:
+- IB formed extreme (204 pts), impulse SHORT (London Low break + acceptance)
+- 50-61.8% pullback into 5-min FVG tap
+- Shorted on retracement → target IB LOW extension
+
+### Entry Logic (Draft)
+
+```
+TRIGGER: After IB close (10:30 ET)
+DIRECTION: Determined by session directional bias (see below)
+
+IF direction == SHORT:
+    entry_zone_high = IB_LOW + 0.618 * IB_RANGE  (upper fib)
+    entry_zone_low  = IB_LOW + 0.500 * IB_RANGE  (lower fib)
+    ENTRY: Price enters zone AND shows rejection (close back below zone)
+    STOP: Above IB HIGH (or above entry_zone_high + buffer)
+    TARGET: IB LOW retest → extension below IB LOW (1.5-2x IB range)
+
+IF direction == LONG:
+    entry_zone_low  = IB_HIGH - 0.618 * IB_RANGE
+    entry_zone_high = IB_HIGH - 0.500 * IB_RANGE
+    ENTRY: Price enters zone AND shows rejection (close back above zone)
+    STOP: Below IB LOW (or below entry_zone_low - buffer)
+    TARGET: IB HIGH retest → extension above IB HIGH
+```
+
+### Key Challenge: Determining Session Directional Bias
+
+This strategy ONLY works if you correctly identify the impulse direction. The retracement is a continuation trade — wrong direction = catching a knife.
+
+**Bias determination signals (ranked by reliability)**:
+
+| Signal | Weight | How We Detect It | Status |
+|--------|--------|-------------------|--------|
+| **London session sweep + rejection** | HIGH | Price swept London High/Low then reversed hard | Have London levels; need sweep detection |
+| **OR direction (A+B periods)** | HIGH | Which way did the first 30 min move? Impulse up or down? | Have OR high/low |
+| **IB extension direction** | HIGH | Did price extend beyond IBH or IBL first? Which side has the impulse? | Have IB metrics |
+| **VWAP slope at IB close** | MEDIUM | Rising VWAP = bullish impulse, falling = bearish | Have VWAP |
+| **Delta cumulative direction** | MEDIUM | Net buying vs selling pressure through IB formation | Have delta |
+| **Prior day VA gap** | MEDIUM | Open above/below prior VA → directional bias | Have prior VA |
+| **Overnight session direction** | MEDIUM | Overnight bearish + London rejection = continuation SHORT | Have ON levels |
+| **3-vote regime bias** | LOW | EMA20 vs EMA50 (2x), prior session (1x), price vs VWAP (1x) | Have regime_bias |
+
+**Composite bias score (proposed)**:
+```python
+def compute_ib_impulse_direction(session_context, ib_data):
+    """Determine the impulse direction during IB formation.
+
+    Returns: ('LONG', confidence) or ('SHORT', confidence)
+    """
+    votes = []
+
+    # 1. Which side of IB was the impulse? (strongest signal)
+    #    If price swept IBH first then crashed to IBL → impulse SHORT
+    #    If price swept IBL first then rallied to IBH → impulse LONG
+    ib_first_extreme = detect_ib_first_extreme(ib_data)  # NEW MODULE NEEDED
+    if ib_first_extreme == 'high_first':
+        votes.append(('SHORT', 2.0))  # high made first → reversal down = impulse short
+    elif ib_first_extreme == 'low_first':
+        votes.append(('LONG', 2.0))
+
+    # 2. London sweep direction
+    if price_swept_london_high_and_rejected:
+        votes.append(('SHORT', 1.5))
+    elif price_swept_london_low_and_rejected:
+        votes.append(('LONG', 1.5))
+
+    # 3. C-period close direction (first 5-min bar after OR)
+    #    C-period close below OR low = bearish impulse emerging
+    c_close = session_context.get('c_period_close')
+    if c_close < or_low:
+        votes.append(('SHORT', 1.0))
+    elif c_close > or_high:
+        votes.append(('LONG', 1.0))
+
+    # 4. VWAP slope at IB close
+    vwap_slope = session_context.get('vwap_slope_at_ib')  # NEW: need to compute
+    if vwap_slope < -0.5:
+        votes.append(('SHORT', 0.8))
+    elif vwap_slope > 0.5:
+        votes.append(('LONG', 0.8))
+
+    # 5. Delta cumulative at IB close
+    delta = session_context.get('delta_cumulative_at_ib')
+    if delta < -threshold:
+        votes.append(('SHORT', 0.7))
+    elif delta > threshold:
+        votes.append(('LONG', 0.7))
+
+    # 6. Overnight + prior VA context
+    if overnight_bearish and open_below_prior_val:
+        votes.append(('SHORT', 0.5))
+
+    # Weighted vote → direction + confidence
+    long_score = sum(w for d, w in votes if d == 'LONG')
+    short_score = sum(w for d, w in votes if d == 'SHORT')
+    total = long_score + short_score
+
+    if short_score > long_score:
+        return ('SHORT', short_score / total if total > 0 else 0)
+    else:
+        return ('LONG', long_score / total if total > 0 else 0)
+```
+
+**Minimum confidence threshold**: Only take the trade if confidence > 0.65 (strong directional agreement).
+
+### Entry Refinements (from user's execution style)
+
+1. **FVG confluence**: User often waits for 50-61.8% zone to align with a 5-min FVG → higher precision entry
+2. **VWAP as confirmation**: If VWAP is in the fib zone, price sweeping above/below VWAP and failing back = strong confirmation
+3. **2nd push failure filter**: If the 2nd push beyond IB extreme fails to make new lows/highs → DON'T take the extension (2026-03-12 lesson)
+4. **Level confluence**: Entry zone near Asia Low, London level, or prior day VA edge = higher conviction
+
+### Filters & Guards
+
+- **IB range minimum**: IB must be > 100 pts (extreme or wide IB). Narrow IB = no clear impulse.
+- **Not a rotation day**: If IB formed via tight rotation (both sides tested equally), skip. Need clear one-sided impulse.
+- **Time window**: Entry between 10:30 (IB close) and 12:00. After 12:00, the retracement setup loses edge.
+- **Max 1 trade/session**: One IB retracement per session.
+- **Day type filter**: Works best on trend days and P-days. Avoid on B-days and neutral days (no impulse to retrace).
+
+### What We Need to Build
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| IB impulse direction detector | NEW | Which extreme formed first? Sweep + rejection detection |
+| London sweep detection module | NEW | Did price sweep London H/L then reverse? (also feeds trendline module) |
+| VWAP slope at IB close | NEW | Simple: VWAP value change over IB period |
+| Composite bias scorer | NEW | Weighted vote system (code above) |
+| 50-61.8% fib zone calculator | EASY | Pure math from IB high/low |
+| FVG confluence check | PARTIAL | Have FVG detection; need to check if FVG overlaps fib zone |
+| 2nd push failure detection | NEW | Detect failed continuation beyond IB extreme (prevents 20P-style traps) |
+
+### Relationship to Existing Strategies
+
+- **Distinct from 20P IB Extension**: 20P enters on the BREAKOUT (3 closes beyond IB). IB Retracement enters on the PULLBACK after the impulse. Different entry logic, different timing.
+- **Distinct from 80P Rule**: 80P is a prior-day VA mean reversion. IB Retracement is an intraday impulse continuation.
+- **Complementary to OR Rev**: OR Rev catches the initial reversal at OR extreme. IB Retracement catches the continuation after IB forms. They can fire on the same session (OR Rev at 9:45, IB Retrace at 10:45).
+- **Overlaps with disabled P-Day IBH retest**: P-Day's IBH retest (31.2% WR) failed because it retested the IB boundary, not the 50% zone. This strategy targets the deeper pullback zone which has better R:R.
+
+### Backtest Priority
+
+**HIGH** — User trades this consistently on live sessions. If backtested at even 50% WR with 2R target, the expectancy would be strong. The key differentiator is the directional bias determination — if we get that right, this could be one of the highest-conviction strategies.
+
+**Proposed backtest plan**:
+1. Build the strategy with the composite bias scorer
+2. Backtest on all 270 sessions
+3. Compare: IB Retracement WR when bias confidence > 0.65 vs < 0.65
+4. If the bias scorer works, this validates the directional bias determination for ALL strategies (not just this one)
 
 ---
 
@@ -1267,3 +1659,644 @@ Phase D (COMPARE):
 - [ ] Run parallel backtest: 3 chunks × 90 sessions → merge results
 - [ ] Update `configs/filters.yaml` with vLLM endpoint
 - [ ] Update deploy script (replace `deploy-128k.sh` with vLLM systemd service)
+
+---
+
+## Run E Results & Findings (2026-03-11)
+
+> **Full 270-session LLM debate backtest completed.** ~6.5 hours sequential on Ollama/Qwen3.5:35b-a3b.
+> **Report**: `reports/backtest_NQ_20260311_192328_f401a8.md`
+> **Report skill**: `/backtest-report` — consistent post-backtest analysis (12 steps, trade classification, agent decisions, filtered signal analysis, pattern discovery)
+
+### Run E Portfolio Results
+
+| Metric | Run A (No Filter) | Run B (Mech Only) | Run E (Mech+Agent+LLM) |
+|--------|-------------------|-------------------|------------------------|
+| Trades | 408 | 259 | 179 |
+| Win Rate | 56.1% | 61.0% | **66.5%** |
+| Profit Factor | 2.45 | 3.07 | **3.58** |
+| Net PnL | $159,332 | $125,885 | **$92,909** |
+| Expectancy | $390 | $486 | **$519** |
+| Max Win Streak | — | — | 10 |
+| Max Loss Streak | — | — | 5 |
+
+### Per-Strategy Results (Run E)
+
+| Strategy | Trades | WR | PF | PnL | Study Target | Status |
+|----------|--------|-----|-----|------|-------------|--------|
+| OR Rev | 52 | **75.0%** | 5.25 | $50,064 | 64.4% | EXCEEDS +10.6pp |
+| OR Accept | 74 | **66.2%** | 3.66 | $22,329 | 59.9% | EXCEEDS +6.3pp |
+| 20P | 32 | **56.2%** | 2.93 | $16,542 | 45.5% | EXCEEDS +10.7pp |
+| B-Day | 20 | 65.0% | 2.01 | $5,655 | 82.0% | BELOW -17pp |
+| 80P | 1 | 0.0% | 0.0 | -$1,682 | 42.3% | BROKEN |
+
+### Key Findings
+
+**1. LLM debate adds alpha over mechanical filters**
+- Run E (66.5% WR, PF 3.58) vs Run B mechanical-only (61.0% WR, PF 3.07)
+- +5.5pp WR improvement, +0.51 PF improvement
+- Trade count dropped from 259 → 179 (LLM filtered 80 additional signals)
+- Expectancy improved $486 → $519/trade
+
+**2. 80P Rule destroyed by AntiChase filter — MUST FIX**
+- AntiChase filter killed 53/72 80P signals BEFORE LLM ever saw them
+- Only 1 trade survived all filters (and it lost)
+- Filtered trades had $22,286 net profit — left on table
+- **Root cause**: AntiChase blocks "contrarian strategies chasing momentum" but 80P SHORT + Bearish bias (67% WR, +$27K in baseline) is legitimate, not chasing
+- **Fix**: Remove 80P from AntiChase filter rules in `configs/filters.yaml`
+
+**3. Filters removing $65K in net profitable trades**
+- 234 trades filtered (112W / 122L, net $65,371 profit)
+- OR Rev: 51 filtered, $25,451 net profit removed
+- 80P: 71 filtered, $22,286 net profit removed
+- Filters are net positive (removing more losses than wins overall) BUT over-aggressive on certain strategies
+
+**4. Time-of-day pattern: 10:00 hour dominates**
+- 10:00 hour: 141 trades, 68.1% WR, $78,281 (84% of total PnL)
+- 11:00 hour: 30 trades, 56.7% WR, $9,619
+- After 12:00: 8 trades, minimal impact
+- Confirms "first hour is the money" principle
+
+**5. Day type performance**
+- Trend Down: 11 trades, **90.9% WR**, $12,787 (best regime)
+- Trend Up: 12 trades, 75.0% WR, $5,979
+- Neutral Range: 114 trades, 64.0% WR, $54,778 (bulk of volume)
+- Balance: 15 trades, 60.0% WR, $6,190
+
+**6. MAE/MFE insight: Winners vs Losers**
+- Winners: Avg MAE 5.7 pts, Avg MFE 90.7 pts (barely go against you)
+- Losers: Avg MAE 58.0 pts, Avg MFE 14.0 pts (go against you hard, never recover)
+- Edge ratio is excellent — winners run, losers are identified early
+
+**7. Agent decision persistence gap (FIXED in code, needs re-run)**
+- Advocate/Skeptic thesis, confidence, warnings, card admit/reject were NOT being saved to DuckDB
+- Added 10 columns to `agent_decisions` table: advocate_thesis, advocate_direction, advocate_confidence, skeptic_thesis, skeptic_direction, skeptic_confidence, skeptic_warnings, debate_cards_admitted, debate_cards_rejected, instinct_cards
+- Updated `persist_agent_decision()` to extract from `debate` context dict
+- **Next backtest will capture full debate reasoning for post-hoc analysis**
+
+**8. Agent decision data quality issues**
+- `strategy_name` showing "unknown" in SKIP decisions — not populated for filtered signals
+- `session_date` blank in some SKIP records
+- `actual_outcome` / `was_correct` not linked for TAKE decisions (backfill logic needs fix)
+- `max_drawdown` stored as $1.41 — clearly a persistence bug in backtest_runs
+
+### Immediate TODO (Before Next Backtest)
+
+- [ ] **Fix AntiChase filter**: Remove 80P from AntiChase rules in `configs/filters.yaml`
+- [ ] **Fix agent decision persistence**: Ensure strategy_name, session_date populated for ALL decisions (TAKE + SKIP)
+- [ ] **Fix was_correct backfill**: Link agent TAKE decisions to trade outcomes
+- [ ] **Fix max_drawdown persistence**: Investigate $1.41 value in backtest_runs
+- [ ] **Re-run backtest** with debate context persistence to capture SKIP reasoning
+- [ ] **Run `/backtest-report`** on new run to verify debate columns populated
+
+### Next Phase: What Run E Tells Us
+
+1. **LLM debate IS adding alpha** — 5.5pp WR improvement over mechanical filters alone justifies the pipeline
+2. **Mechanical filters need tuning** — AntiChase too aggressive on 80P, possibly OR Rev too
+3. **Speed is the bottleneck** — 6.5 hours for 270 sessions. vLLM migration + Option D (skip obvious signals) could cut to <1 hour
+4. **Debate reasoning must be captured** — can't improve what you can't measure. Schema fix done, needs re-run
+5. **Phase B (train analyst)** decision: LLM debate adds >5% WR → training the analyst IS justified (per decision gate above). But first: model benchmark to see if a smaller/faster model matches Qwen3.5:35b quality
+
+---
+
+## Expert Domain Refactoring — Deterministic Intelligence Upgrade
+
+> **Status**: TODO — Planning document
+> **Date**: 2026-03-12
+> **Depends on**: Run E results (complete), Courtroom Analogy architecture (above)
+> **Goal**: Reorganize 38+ deterministic modules into specialized Expert Domains that produce focused, high-signal evidence cards — replacing the current coarse ProfileObserver + MomentumObserver with 6-8 domain-specific expert observers.
+
+### The Problem: Information Loss in the Observer Layer
+
+The current agent pipeline reduces 38 deterministic modules down to **9 evidence cards** through two observers:
+
+```
+38 deterministic modules (9,200 LOC, <10ms total)
+    ↓
+ProfileObserver → 4 cards (TPO shape, VA position, POC position, poor extremes)
+MomentumObserver → 5 cards (DPOC regime, trend strength, wick traps, IB extension, bias alignment)
+    ↓
+Orchestrator sees 9 cards → TAKE/SKIP/REDUCE_SIZE
+```
+
+**What gets lost:**
+- **Balance classification** (balance type, skew, seam level, morph detection) — not represented in any card
+- **Acceptance test** (breakout direction, pullback type, confidence) — not represented
+- **CRI sub-components** (volatility, reclaim, breath, trap individually) — CRI gate emits 1 card, loses granularity
+- **FVG lifecycle** (fill status, respect/disrespect, proximity to price) — not represented
+- **Globex/Prior VA analysis** (Model A/B/C, gap classification, 80P confidence) — not represented
+- **Edge fade zones** (proximity to IB edge, historical IB width context) — not represented
+- **Regime context** (ATR regime, consecutive balance days, weekly context, VIX) — not represented
+- **Core confluences** (price location, delta bias, EMA alignment) — partially in momentum observer but flattened
+- **Premarket context** (ON range, London/Asia levels, gap size) — not represented
+- **Market structure events** (FVG creation/fill, VA extension, DPOC shift) — not represented
+
+The Advocate and Skeptic argue from **9 cards** when the deterministic layer has computed **38 modules worth of analysis**. That is like asking lawyers to try a case where only 2 of 15 expert witnesses were allowed to testify.
+
+### The Solution: Expert Domain Architecture
+
+Reorganize the 38 modules into **8 Expert Domains**, each a class that:
+1. Takes raw module outputs as input
+2. Produces 2-5 focused evidence cards (with confidence, not just binary)
+3. Can be tested independently (unit tests per domain)
+4. Feeds directly into the agent pipeline as an observer replacement
+5. Preserves `raw_data` references so the LLM debate can dig deeper if needed
+
+```
+38 deterministic modules (unchanged — still run in <10ms)
+    ↓
+8 Expert Domain Observers (replace ProfileObserver + MomentumObserver)
+    ↓
+~24-32 evidence cards (vs current 9) — HIGHER quality, FOCUSED signal
+    ↓
+[Optional] LLM Debate (Advocate/Skeptic argue from richer evidence)
+    ↓
+Orchestrator (deterministic decision, same as today)
+```
+
+### Expert Domain #1: Profile Expert
+
+**Responsibility**: TPO shape, distribution analysis, VA dynamics, structural tells.
+
+**Deterministic modules that feed in**:
+- `tpo_profile.py` — TPO shape, period letters, distribution
+- `volume_profile.py` — Volume-at-price, POC, VAH, VAL, HVN/LVN
+- `balance_classification.py` — Balance type, skew, seam, morph detection
+
+**Evidence cards produced** (3-4):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `profile_shape_alignment` | TPO shape + direction alignment | "b-shape (value building at bottom) aligned with LONG signal — bullish structural tell" |
+| `profile_va_dynamics` | VA position + migration + width | "Price above VAH, VA widening upward, 30-min acceptance outside — initiative activity, bullish" |
+| `profile_balance_state` | Balance type + skew + morph | "Balance B-Day detected, skew bearish (70%), seam at 21450 — fade upper probe" |
+| `profile_structural_tells` | Poor highs/lows + single prints + excess | "Poor high + 3 single prints above POC — unfinished business, upside target remains" |
+
+**Improvement over current ProfileObserver**:
+- Current: 4 cards that each look at ONE data point in isolation (shape alone, VA alone, POC alone, poor extremes alone)
+- New: Cards that CROSS-REFERENCE module outputs (e.g., balance type + skew together, VA migration + acceptance together)
+- New: `profile_balance_state` card is entirely missing today — balance classification output is never seen by agents
+- New: Confidence scoring uses multiple signals (VA width + acceptance + shape convergence = higher confidence)
+
+**Confidence scoring approach**:
+```python
+def _va_dynamics_confidence(self, va_position, acceptance, va_migration, shape_alignment):
+    """Multi-factor confidence for VA dynamics card."""
+    base = 0.5
+    if va_position in ("above_vah", "below_val"):
+        base += 0.1  # price outside VA = directional
+    if acceptance:
+        base += 0.15  # 30-min acceptance confirms
+    if va_migration == "aligned":
+        base += 0.1  # VA moving same direction as price
+    if shape_alignment:
+        base += 0.1  # TPO shape confirms direction
+    return min(base, 0.95)
+```
+
+---
+
+### Expert Domain #2: Order Flow Expert
+
+**Responsibility**: Delta, CVD divergence, volume distribution, absorption signals, wick patterns.
+
+**Deterministic modules that feed in**:
+- `wick_parade.py` — Bull/bear wick counts, wick ratios
+- `core_confluences.py` — Delta cumulative, delta bias, EMA alignment
+- `intraday_sampling.py` — 5-min bar sampling, volume distribution
+- `volume_profile.py` — Volume concentration, HVN/LVN proximity
+
+**Evidence cards produced** (3-4):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `flow_delta_divergence` | Price vs CVD alignment/divergence | "Price making new high but CVD flat — sellers absorbing, divergence warns against LONG" |
+| `flow_wick_traps` | Wick parade pattern + interpretation | "6 bear wicks in 45 min — sellers repeatedly trapped, LONG has hidden support" |
+| `flow_volume_distribution` | Volume concentration + acceptance pattern | "Volume concentrated at session lows (accumulation signature) — bullish" |
+| `flow_absorption` | Delta absorption at key levels | "Large negative delta at VAH but price holding — absorption, buyers absorbing selling" |
+
+**Improvement over current MomentumObserver**:
+- Current: `momentum_wick_traps` card counts wicks but doesn't consider CONTEXT (wick parade during acceptance vs during rejection means different things)
+- New: Wick patterns cross-referenced with price location (wick traps AT a key level = much stronger signal)
+- New: CVD divergence card is entirely missing today — the most powerful order flow signal has no representation
+- New: Volume distribution pattern (accumulation/distribution) is never surfaced
+
+**New deterministic intelligence needed**:
+- CVD divergence detection: Track cumulative delta vs price highs/lows. When price makes HH but CVD doesn't, flag divergence. This is a simple computation on existing delta data but needs a dedicated function.
+- Absorption detection: When delta is strongly negative but price holds (or vice versa), flag absorption. Needs threshold calibration from backtest data.
+
+---
+
+### Expert Domain #3: Structure Expert
+
+**Responsibility**: IB classification, extensions, day type evolution, CRI terrain assessment.
+
+**Deterministic modules that feed in**:
+- `cri.py` — CRI components (volatility, reclaim, breath, trap, terrain, identity, permission)
+- `cri_psychology_voice.py` — CRI-based sizing, terrain-setup conflict detection
+- `acceptance_test.py` — Breakout detection, pullback type, acceptance confidence
+- `ib_location.py` — IB position within range, ADX, Bollinger Bands
+- `decision_engine.py` — Day type classification, trend strength, morph status
+
+**Evidence cards produced** (3-5):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `structure_cri_terrain` | CRI terrain + permission with sub-component detail | "TERRAIN: TRENDING (breath strong, reclaim confirmed). PERMISSION: FULL_SIZE. Trap risk: LOW" |
+| `structure_day_evolution` | Day type + morph status + trend strength | "Day type morphing from Balance → Trend Down. Morph confidence 75%. Trend strength: moderate bearish" |
+| `structure_ib_extension` | IB extension magnitude + acceptance status | "IB extended 1.8× below — 30-min acceptance confirmed. Not a probe — this is initiative" |
+| `structure_acceptance` | Pullback type + acceptance confidence | "Post-breakout: shallow pullback (didn't recross IBL), high acceptance confidence (0.82)" |
+| `structure_time_context` | Time-of-day gating for signal relevance | "Signal at 12:30 — late session, confidence time-capped. 84% of PnL comes from 10:00 hour" |
+
+**Improvement over current observers**:
+- Current: CRI gate produces 1 binary card (pass/fail). The rich sub-components (volatility, reclaim, breath, trap) are invisible to debate.
+- New: CRI terrain card exposes sub-components so Advocate can argue "breath is strong even though trap is moderate" and Skeptic can counter "but reclaim is weak"
+- Current: Extension card is oversimplified (just the multiple). New card includes acceptance status, which is the REAL signal.
+- New: Day type morphing is never surfaced — critical for avoiding trades that assume one day type when it is changing
+
+---
+
+### Expert Domain #4: Level Expert (NEW — currently missing)
+
+**Responsibility**: Prior session levels, London/Asia levels, VWAP, FVGs, naked levels, and most importantly **level confluence scoring**.
+
+**Deterministic modules that feed in**:
+- `globex_va_analysis.py` — Prior VA, gap classification, Model A/B/C
+- `premarket.py` — London/Asia high/low, ON range, gap size
+- `fvg_detection.py` — FVG locations, fill status, proximity
+- `ninety_min_pd_arrays.py` — 90-min arrays, displacement/rebalance zones
+- `core_confluences.py` — VWAP, EMA levels
+- (NEW) Level confluence scoring function
+
+**Evidence cards produced** (3-5):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `level_confluence_zone` | Cluster of levels near current price | "3 levels within 15 pts of entry: London High (21,540), Prior VAH (21,535), unfilled bearish FVG (21,542). HIGH confluence — strong resistance zone" |
+| `level_prior_va_model` | Prior VA model classification + gap status | "Open above prior VA, Model A detected (failed auction above). 80P confidence: 72%" |
+| `level_fvg_proximity` | Nearest unfilled FVG + respect/disrespect status | "Unfilled 15-min bearish FVG at 21,480, price 20 pts below. If respected = overhead resistance. 3 prior FVGs in this zone were respected (75% rate)" |
+| `level_premarket_context` | London/Asia levels + overnight range + gap | "London Low at 21,350 swept by 12 pts and rejected. ON range: 120 pts (wide). Gap: -45 pts (bearish)" |
+| `level_naked_targets` | Untested significant levels (liquidity targets) | "PDH (21,620) untested — liquidity resting. Prior session poor high at 21,615 — likely sweep target" |
+
+**Why this is the highest-value new domain**:
+- Level confluence is the #1 missing signal. The user draws levels and looks for clusters — the system sees none of this.
+- No observer currently surfaces FVG data, prior VA models, or London/Asia levels to the agent pipeline.
+- Level confluence scoring (counting how many levels cluster near an entry price) is pure deterministic math — fast, reliable, high signal.
+
+**Level confluence scoring algorithm (new)**:
+```python
+def score_level_confluence(entry_price: float, levels: list[dict], atr: float) -> dict:
+    """Score how many significant levels cluster near the entry price.
+
+    Args:
+        entry_price: Proposed entry price
+        levels: List of {"name": str, "price": float, "weight": float}
+            weight: 1.0 for major (PDH/PDL, London H/L, Prior VAH/VAL)
+                    0.7 for moderate (VWAP, unfilled FVG, 90-min array)
+                    0.5 for minor (EMA, ON range edge)
+        atr: Current ATR for proximity thresholds
+
+    Returns:
+        {"confluence_score": float (0-1),
+         "levels_within_10pts": int,
+         "levels_within_atr_quarter": int,
+         "nearest_level": {"name": str, "price": float, "distance": float},
+         "cluster_direction": "support" | "resistance" | "mixed"}
+    """
+    proximity_threshold = max(atr * 0.25, 10.0)  # Within 25% of ATR or 10 pts
+    nearby = [l for l in levels if abs(l["price"] - entry_price) <= proximity_threshold]
+    weighted_score = sum(l["weight"] for l in nearby)
+    # Normalize: 0 levels = 0.0, 3+ major levels = 1.0
+    confluence_score = min(weighted_score / 3.0, 1.0)
+    ...
+```
+
+---
+
+### Expert Domain #5: Momentum Expert
+
+**Responsibility**: Trend direction, DPOC migration, EMA alignment, momentum velocity and exhaustion.
+
+**Deterministic modules that feed in**:
+- `dpoc_migration.py` — DPOC direction, velocity, retention
+- `dalton.py` — Trend analysis (EMA20/50, slope, crossover)
+- `decision_engine.py` — Trend strength classification, bias cap
+- `core_confluences.py` — EMA alignment, delta momentum direction
+
+**Evidence cards produced** (2-3):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `momentum_trend_regime` | Trend direction + strength + EMA alignment | "Strong bullish: EMA20 > EMA50, both rising, price above both. ADX 32 (trending). Aligned with LONG" |
+| `momentum_dpoc_velocity` | DPOC migration + velocity + exhaustion detection | "DPOC migrating up 25 pts in 60 min (fast). BUT velocity decelerating — last 30 min only +5 pts. Exhaustion risk" |
+| `momentum_bias_composite` | Multi-vote bias + alignment with signal | "Bias: Bullish (4/5 votes). EMA20>50 [2x], prior session bullish [1x], price>VWAP [1x]. Aligned with LONG signal" |
+
+**Improvement over current MomentumObserver**:
+- Current: `momentum_dpoc_regime` card classifies DPOC as trending/rotating/migrating but misses VELOCITY and EXHAUSTION — the most actionable signals
+- Current: `momentum_trend_strength` card reads a string like "strong bullish" but doesn't report EMA positions, slopes, or ADX
+- New: DPOC velocity + deceleration detection catches "momentum fading" which is the key tape reading insight
+- New: Composite bias card aggregates the 3-vote system into one clear card with vote breakdown
+
+---
+
+### Expert Domain #6: Regime Expert
+
+**Responsibility**: Macro context — ATR regime, VIX, weekly context, consecutive balance days, session type classification.
+
+**Deterministic modules that feed in**:
+- `regime_context.py` — ATR regime, 5-min ATR, prior day type, consecutive balance, weekly context, VIX, composite regime labels
+- `vix_regime.py` — VIX level, VIX regime classification
+
+**Evidence cards produced** (2-3):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `regime_volatility` | ATR regime + VIX context + implication | "ATR regime: HIGH (ATR 280 pts, 90th percentile). VIX: 22.5 (elevated). Wide stops needed, reduce size" |
+| `regime_pattern` | Consecutive balance + weekly pattern + prior session type | "3 consecutive balance days — breakout probability elevated. Prior session: Trend Down. Weekly context: range-bound Mon-Wed" |
+| `regime_sizing_guidance` | Regime-based position sizing recommendation | "High vol + 3rd balance day = REDUCE_SIZE. Historical: 4th balance day breaks out 68% of the time" |
+
+**Why this matters**:
+- Regime context is never surfaced to agents today. A 80P trade in a VIX-25 environment needs completely different treatment than VIX-14.
+- Consecutive balance days are a powerful predictor (user observation #3: "3rd+ balance day often breaks out") but agents never see this.
+- Regime-based sizing guidance is deterministic and should pre-adjust conviction before the LLM debate even starts.
+
+---
+
+### Expert Domain #7: Swing/Trendline Expert (NEW — requires 2.6-2.7 modules)
+
+**Responsibility**: Swing point structure, trendline detection, 3rd touch signals.
+
+**Deterministic modules that feed in**:
+- (NEW) `swing_detection.py` — Swing highs/lows, HH/HL/LH/LL classification (see section 2.6)
+- (NEW) `trendline_detection.py` — Trendline fitting, touch counting, 3rd touch alerts (see section 2.7)
+
+**Evidence cards produced** (2-3):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `swing_structure` | Current swing sequence + trend classification | "15-min structure: HH, HL, HH, HL — confirmed uptrend. Last swing low at 21,380. Structure break level: 21,380" |
+| `trendline_3rd_touch` | 3rd touch approaching/confirmed + rejection pattern | "3rd touch of 15-min descending trendline at 21,490. Rejection candle score: 0.7 (strong). Historical: 3rd touches bounce 64% of the time" |
+| `trendline_confluence` | Trendline intersection with other levels | "Descending trendline 3rd touch AT London Low (21,350) — double confluence. Trendline + level alignment = HIGH conviction" |
+
+**Dependencies**: Requires swing point detection (2.6) and trendline analysis (2.7) modules to be implemented first. These are detailed in the "Future Deterministic Modules" section above.
+
+---
+
+### Expert Domain #8: Cross-Instrument Expert (NEW — requires 2.5 module)
+
+**Responsibility**: SMT divergence, ES/NQ/YM correlation, relative strength.
+
+**Deterministic modules that feed in**:
+- `cross_market.py` — Existing cross-market analysis
+- `smt_detection.py` — Existing SMT detection (basic)
+- (NEW) Enhanced multi-instrument swing-based SMT detection (see section 2.5)
+
+**Evidence cards produced** (1-2):
+
+| Card ID | What It Captures | Example Observation |
+|---------|-----------------|---------------------|
+| `cross_smt_divergence` | SMT divergence across correlated instruments | "NQ making new high but ES did not confirm (15-min). Bearish SMT divergence. Weight: 0.7 (intraday TF)" |
+| `cross_relative_strength` | Which instrument is leading/lagging | "NQ leading ES by 0.3% today. YM lagging both. NQ leadership often precedes NQ trend continuation" |
+
+**Dependencies**: Requires multi-instrument data loader enhancement (ES + YM data alongside NQ). Lowest priority — do last.
+
+---
+
+### Evidence Card Architecture (Shared Across All Domains)
+
+Each Expert Domain observer extends `AgentBase` and produces `EvidenceCard` instances with enhanced metadata:
+
+```python
+@dataclass
+class EvidenceCard:
+    card_id: str                    # e.g., "level_confluence_zone"
+    source: str                     # e.g., "expert_level"
+    layer: str                      # "certainty" | "probabilistic" | "instinct"
+    observation: str                # Human-readable summary
+    direction: str                  # "bullish" | "bearish" | "neutral"
+    strength: float                 # 0.0-1.0 (multi-factor confidence)
+    data_points: int = 1            # How many data points back this card
+    historical_support: str | None  # DuckDB query result, if available
+    admitted: bool | None = None    # None=pre-debate, True/False=post-debate
+    raw_data: dict = field(...)     # Full module output for LLM deep-dive
+
+    # NEW fields for Expert Domain architecture:
+    category: str = ""              # "profile" | "flow" | "structure" | "level" | ...
+    sub_signals: int = 1            # How many sub-signals converged to produce this card
+    confidence_factors: list = ...  # What contributed to the strength score
+```
+
+**Layer classification guide**:
+- `certainty` — Based on hard numbers: IB range, price vs level, day type. No interpretation needed.
+- `probabilistic` — Based on patterns with known historical rates: 3rd touch bounce rate, CRI terrain outcomes.
+- `instinct` — Based on pattern recognition that lacks hard statistics: wick parade interpretation, FVG respect/disrespect "feel."
+
+**Card count budget**: Each Expert Domain produces 2-5 cards. With 8 domains, worst case is 40 cards, typical case is ~24-28. The Orchestrator scorecard handles this — it already sums bull/bear scores regardless of card count. The LLM debate benefits from richer evidence without being overwhelmed (each card is a single sentence, not a paragraph).
+
+---
+
+### Integration with Agent Pipeline
+
+**Current pipeline** (`pipeline.py`):
+```python
+self.observers = observers or [ProfileObserver(), MomentumObserver()]
+```
+
+**New pipeline**:
+```python
+self.observers = observers or [
+    ProfileExpert(),          # TPO shape, VA dynamics, balance, structural tells
+    OrderFlowExpert(),        # Delta divergence, wick traps, volume distribution
+    StructureExpert(),        # CRI terrain, day evolution, IB extension, acceptance
+    LevelExpert(),            # Confluence scoring, prior VA, FVGs, premarket levels
+    MomentumExpert(),         # Trend regime, DPOC velocity, composite bias
+    RegimeExpert(),           # Volatility regime, balance pattern, sizing guidance
+    # Phase C additions:
+    # SwingTrendlineExpert(), # Swing structure, 3rd touch, trendline confluence
+    # Phase D additions:
+    # CrossInstrumentExpert(),# SMT divergence, relative strength
+]
+```
+
+**Key architectural decisions**:
+1. **Each expert runs independently** — no cross-domain dependencies at the observer level. Cross-domain synthesis happens in the Orchestrator.
+2. **Experts consume raw module output** — they read from the snapshot dict, same as current observers. No new data pipeline needed.
+3. **Backward compatible** — old `ProfileObserver` + `MomentumObserver` still work. New experts are additive. Can A/B test old vs new.
+4. **Same `EvidenceCard` dataclass** — no schema change needed for Orchestrator or debate layer.
+5. **Parallelizable** — all 6-8 experts can run concurrently (they are pure functions of the snapshot).
+
+**Impact on LLM debate**:
+- Advocate gets ~24 cards instead of ~9 to argue from — richer evidence, more ammunition
+- Skeptic gets more surface area to challenge — "the flow_delta_divergence card contradicts the momentum_trend_regime card"
+- Disputed card resolution (0.7x weight) becomes more meaningful with fine-grained cards
+- Instinct cards from LLM can reference specific expert findings: "Building on the level_confluence_zone card, I notice..."
+
+**Impact on Orchestrator scoring**:
+- More cards = more granular bull/bear scores
+- But each card has FOCUSED strength (not inflated) — a 3-level confluence zone gets 0.8 strength, not every level individually at 0.5
+- Net effect: same scoring mechanics, higher resolution signal
+
+---
+
+### Phasing Plan
+
+#### Phase A: Reorganize Existing Modules into Domains (No New Code)
+
+**Scope**: Create 6 Expert Domain observer classes that consume existing module outputs. No new deterministic modules. No new computations. Pure reorganization.
+
+**Deliverables**:
+1. `packages/rockit-core/src/rockit_core/agents/observers/profile_expert.py`
+2. `packages/rockit-core/src/rockit_core/agents/observers/order_flow_expert.py`
+3. `packages/rockit-core/src/rockit_core/agents/observers/structure_expert.py`
+4. `packages/rockit-core/src/rockit_core/agents/observers/level_expert.py`
+5. `packages/rockit-core/src/rockit_core/agents/observers/momentum_expert.py`
+6. `packages/rockit-core/src/rockit_core/agents/observers/regime_expert.py`
+7. Unit tests for each expert (target: 8-12 tests per expert)
+8. A/B test script: old observers (9 cards) vs new experts (~24 cards)
+
+**Estimated effort**: 2-3 sessions. Each expert is ~150-250 lines (similar to current ProfileObserver at 217 lines).
+
+**Validation**: Run backtest with new experts. Compare agent decision quality (WR, PF) against Run E baseline (66.5% WR, PF 3.58). The expert domains should produce >= same quality with richer reasoning traces.
+
+**Risk**: More cards could DILUTE signal if poorly calibrated. Mitigate by ensuring each card's strength is conservative (start at 0.5, boost only with multi-factor convergence).
+
+#### Phase B: Add Level Confluence Scoring (New Deterministic Intelligence)
+
+**Scope**: Build the level confluence scoring function and the Level Expert observer.
+
+**Deliverables**:
+1. `level_confluence.py` in deterministic modules — score how many levels cluster near a price
+2. Update `LevelExpert` observer to use confluence scoring
+3. Integration test: verify confluence scores for known sessions (e.g., 2026-03-12 had London Low + descending trendline + FVG = high confluence)
+
+**Estimated effort**: 1-2 sessions. The scoring algorithm is straightforward math.
+
+**Validation**: Compare agent decisions WITH level confluence vs WITHOUT. Hypothesis: level confluence prevents at least 3-5 losing trades per 270 sessions (trades taken at low-confluence entry points).
+
+#### Phase C: Add Swing/Trendline Expert (New Modules from 2.6-2.7)
+
+**Scope**: Implement swing point detection and trendline analysis, then wrap in SwingTrendlineExpert observer.
+
+**Deliverables**:
+1. `swing_detection.py` — causal swing point detection (see section 2.6 for full spec)
+2. `trendline_detection.py` — trendline fitting + 3rd touch detection (see section 2.7 for full spec)
+3. `SwingTrendlineExpert` observer class
+4. 3rd touch backtest study across 270 sessions (bounce vs break rates, WR by timeframe)
+
+**Estimated effort**: 3-5 sessions. Swing detection is well-specified (section 2.6). Trendline fitting has more edge cases.
+
+**Dependencies**: Swing detection must work before trendline detection.
+
+**Validation**: Run the 3rd touch study. If bounce rate > 60% and WR improvement > 2pp, trendline expert is justified.
+
+#### Phase D: Add Cross-Instrument Expert (New Module from 2.5)
+
+**Scope**: Enhanced SMT divergence detection across NQ/ES/YM.
+
+**Deliverables**:
+1. Enhanced `smt_detection.py` with swing-based divergence (not just price comparison)
+2. Multi-instrument data loader (load ES + YM alongside NQ)
+3. `CrossInstrumentExpert` observer class
+
+**Estimated effort**: 2-3 sessions. Data loader work is the main effort.
+
+**Dependencies**: Swing detection (Phase C) for swing-based SMT. Multi-instrument CSV data availability.
+
+**Validation**: SMT divergence study across 270 sessions. Historical: how often does SMT divergence precede reversals?
+
+#### Phase E: Benchmark — Expert Domains vs Current Observers
+
+**Scope**: Full A/B backtest comparing:
+- **Run F**: Current observers (ProfileObserver + MomentumObserver, 9 cards) + LLM debate
+- **Run G**: Expert Domain observers (6-8 experts, ~24-32 cards) + LLM debate
+
+**Key metrics to compare**:
+- Win Rate, Profit Factor, Net PnL (must not regress)
+- Per-strategy improvement (especially 80P and B-Day which are underperforming)
+- Debate quality: Do Advocate/Skeptic produce more nuanced arguments with richer evidence?
+- False positive rate: Do expert domains help SKIP more losing trades without filtering winners?
+
+**Decision gate**:
+- Run G >= Run F → Expert domains are the new default
+- Run G < Run F by > 2pp WR → Experts are diluting signal, reduce card count or recalibrate strengths
+- Run G ~ Run F (within 1pp) → Experts add no value at observer level, but may still help LLM debate quality. Assess qualitatively.
+
+---
+
+### Module-to-Domain Mapping (Complete Reference)
+
+| Deterministic Module | Expert Domain | Notes |
+|---------------------|---------------|-------|
+| `tpo_profile.py` | Profile Expert | TPO shape, periods, distribution |
+| `volume_profile.py` | Profile Expert + Order Flow Expert | VA/POC → Profile; volume distribution → Order Flow |
+| `balance_classification.py` | Profile Expert | Balance type, skew, seam, morph |
+| `wick_parade.py` | Order Flow Expert | Bull/bear wick counts |
+| `core_confluences.py` | Order Flow Expert + Momentum Expert | Delta → Order Flow; EMA alignment → Momentum |
+| `intraday_sampling.py` | Order Flow Expert | Volume distribution, bar sampling |
+| `cri.py` | Structure Expert | CRI terrain, identity, permission, sub-components |
+| `cri_psychology_voice.py` | Structure Expert | CRI sizing, conflict detection |
+| `acceptance_test.py` | Structure Expert | Breakout, pullback, acceptance |
+| `ib_location.py` | Structure Expert | IB position, ADX, Bollinger |
+| `decision_engine.py` | Structure Expert + Momentum Expert | Day type → Structure; trend strength/bias → Momentum |
+| `globex_va_analysis.py` | Level Expert | Prior VA, gap, Model A/B/C |
+| `premarket.py` | Level Expert | London/Asia levels, ON range, gap |
+| `fvg_detection.py` | Level Expert | FVG locations, fill status |
+| `ninety_min_pd_arrays.py` | Level Expert | 90-min arrays, displacement zones |
+| `dpoc_migration.py` | Momentum Expert | DPOC direction, velocity, retention |
+| `dalton.py` | Momentum Expert | Trend analysis, EMA crossover |
+| `regime_context.py` | Regime Expert | ATR, prior day type, balance streak, weekly |
+| `vix_regime.py` | Regime Expert | VIX level, VIX regime |
+| `edge_fade.py` | Structure Expert | Edge fade zone proximity |
+| `or_reversal.py` | Structure Expert | OR reversal detection |
+| `twenty_percent_rule.py` | Level Expert | 20P rule levels |
+| `mean_reversion_engine.py` | Momentum Expert | Mean reversion signals |
+| `market_structure_events.py` | Profile Expert + Level Expert | VA extension → Profile; FVG events → Level |
+| `cross_market.py` | Cross-Instrument Expert | Cross-market correlation |
+| `smt_detection.py` | Cross-Instrument Expert | SMT divergence |
+| `tape_context.py` | (meta — feeds all experts) | General tape context |
+| `enhanced_reasoning.py` | (meta — feeds LLM, not experts) | LLM reasoning prompts |
+| `trader_voice.py` | (meta — feeds LLM, not experts) | Trader voice for analysis |
+| `setup_annotator.py` | (meta — feeds UI, not experts) | Setup annotations |
+| `inference_engine.py` | (meta — orchestrator level) | LLM inference orchestration |
+| `playbook_engine.py` | (meta — orchestrator level) | Playbook matching |
+| `playbook_engine_v2.py` | (meta — orchestrator level) | Playbook v2 |
+| `loader.py` | (infrastructure) | Data loading |
+| `dataframe_cache.py` | (infrastructure) | Caching |
+| `data_validator.py` | (infrastructure) | Validation |
+| `config_validator.py` | (infrastructure) | Config validation |
+| `schema_validator.py` | (infrastructure) | Schema validation |
+| `error_logger.py` | (infrastructure) | Error logging |
+| `outcome_labeling.py` | (infrastructure) | Outcome labeling for training |
+| `market_structure_registry.py` | (infrastructure) | Level registry |
+
+**Count**:
+- 6 Expert Domain modules: Profile (3 modules), Order Flow (3-4), Structure (5-6), Level (4-5), Momentum (4-5), Regime (2)
+- 2 Future Expert Domain modules: Swing/Trendline (2 new), Cross-Instrument (2-3)
+- 6 Meta/Orchestrator-level modules: Not consumed by experts, used by LLM inference or UI
+- 6 Infrastructure modules: Data loading, caching, validation — unchanged
+
+---
+
+### Courtroom Analogy Integration
+
+This refactoring directly implements the Courtroom Analogy from the architecture section above:
+
+```
+BEFORE (current — incomplete courtroom):
+  2 witnesses (ProfileObserver, MomentumObserver) testify about 38 experts' work
+  → Lawyers hear 9 facts → Judge rules on limited evidence
+
+AFTER (expert domain refactoring):
+  8 expert witnesses testify directly, each covering their specialty
+  → Lawyers hear ~24 focused facts → Judge rules on comprehensive evidence
+
+FUTURE (with trained LLM analyst):
+  8 expert witnesses provide deterministic facts (<10ms)
+  → Trained analyst interprets with trader's voice (~5s per snapshot, on timer)
+  → Lawyers argue from expert testimony + analyst interpretation
+  → Judge rules on facts + nuanced interpretation
+```
+
+The expert domain refactoring strengthens the DETERMINISTIC foundation — the expert witnesses become more specialized and articulate. This is prerequisite work before training the LLM analyst (Phase B in the Courtroom phasing). Better expert testimony means better training data for the analyst, which means better arguments for the lawyers, which means better decisions from the judge.
+
+**Key principle**: Train the experts BEFORE training the analyst. The analyst learns from expert output. If expert output is coarse (9 cards), the analyst learns coarse patterns. If expert output is rich (24 cards), the analyst learns nuanced patterns.
