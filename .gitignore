@@ -74,3 +74,4 @@ npm-debug.log*
 *.tfstate
 *.tfstate.*
 *.tfvars
+*.lock

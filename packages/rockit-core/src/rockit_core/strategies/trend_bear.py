@@ -25,8 +25,8 @@ from rockit_core.strategies.signal import Signal
 from rockit_core.config.constants import ACCEPTANCE_MIN_BARS_BEAR
 
 # ── Study-optimized parameters ──
-STOP_FIXED_PTS = 40.0         # Fixed 40pt stop
-TARGET_FIXED_PTS = 100.0      # Fixed 100pt target (2.5:1 R:R)
+STOP_FIXED_PTS = 50.0         # Fixed 50pt stop (wider to survive MAE)
+TARGET_FIXED_PTS = 125.0      # Fixed 125pt target (2.5:1 R:R, captures outsized moves)
 ADX_THRESHOLD = 35.0          # 15-min ADX >= 35 (bears need stronger trend signal)
 VWAP_PROXIMITY = 0.40         # Within 40% of IB range from VWAP
 EMA_PROXIMITY = 0.20          # Within 20% of IB range from EMA20
@@ -76,7 +76,17 @@ class TrendDayBear(StrategyBase):
         if bar_time and bar_time >= ENTRY_CUTOFF:
             return None
 
-        # ── Phase 2: Check 15-min EMA alignment (bear) ──
+        # ── Phase 2a: Skip counter-bias trades ──
+        bias = session_context.get('session_bias') or session_context.get('regime_bias', 'NEUTRAL')
+        if bias and bias.upper() in ('BULL', 'BULLISH'):
+            return None
+
+        # NOTE: day_type gate removed — by the time this strategy fires
+        # (acceptance + ADX + EMA alignment), the engine has already
+        # classified the day as directional. The DuckDB "Neutral Range" label
+        # is a session-level final classification, not what the engine sees.
+
+        # ── Phase 3: Check 15-min EMA alignment (bear) ──
         ema20_15m = bar.get('ema20_15m')
         ema50_15m = bar.get('ema50_15m')
         adx_15m = bar.get('adx14_15m')

@@ -30,7 +30,7 @@ from rockit_core.config.constants import (
 # ── Study-optimized parameters ──
 STOP_FIXED_PTS = 40.0         # Fixed 40pt stop (winner MAE P80 = 35.7pt)
 TARGET_FIXED_PTS = 100.0      # Fixed 100pt target (2.5:1 R:R)
-ADX_THRESHOLD = 25.0          # 15-min ADX >= 25 (strong trend)
+ADX_THRESHOLD = 28.0          # 15-min ADX >= 28 (optimal: 48.5% WR, PF 1.82)
 VWAP_PROXIMITY = 0.40         # Within 40% of IB range from VWAP
 EMA_PROXIMITY = 0.20          # Within 20% of IB range from EMA20
 ENTRY_CUTOFF = time(13, 0)    # No entries after 13:00 (13:00 hour has PF 0.63)
@@ -84,6 +84,11 @@ class TrendDayBull(StrategyBase):
         bias = session_context.get('session_bias') or session_context.get('regime_bias', 'NEUTRAL')
         if bias and bias.upper() in ('BEAR', 'BEARISH'):
             return None
+
+        # NOTE: day_type gate removed — by the time this strategy fires
+        # (acceptance above IBH + ADX + EMA alignment), the engine has already
+        # classified the day as directional (p_day/trend_up).
+        # DuckDB "Neutral Range" is the session-level FINAL classification.
 
         # ── Phase 3: Check 15-min EMA alignment (bull) ──
         ema20_15m = bar.get('ema20_15m')
