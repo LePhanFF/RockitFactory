@@ -148,6 +148,11 @@ class EightyPercentRule(StrategyBase):
         if not self._active or self._signal_fired:
             return None
 
+        # SHORT-only gate: LONG side is PF 1.05 (+$833) vs SHORT PF 2.52 (+$20K)
+        # LONG only works when entry<=POC (Phase 5 analysis) — too conditional to keep
+        if self._open_below_va:
+            return None
+
         close = bar['close']
         high = bar['high']
         low = bar['low']
