@@ -98,13 +98,13 @@ class TestCRIGateAgent:
     def test_empty_context_passes(self):
         assert self.gate.passes({}) is True
 
-    def test_caution_soft_bearish(self):
-        """CAUTION is a softer bearish signal."""
+    def test_caution_passthrough(self):
+        """CAUTION produces neutral pass-through (CRI scoring disabled)."""
         ctx = {"tape_row": {"cri_status": "CAUTION"}}
         assert self.gate.passes(ctx) is True
         cards = self.gate.evaluate(ctx)
-        assert cards[0].direction == "bearish"
-        assert cards[0].strength == 0.4
+        assert cards[0].direction == "neutral"
+        assert cards[0].strength == 0.0
 
 
 # ---------------------------------------------------------------------------

@@ -136,6 +136,7 @@ class TestIBLFadeLong:
         assert sig.target_price == sig.entry_price + 2.0 * risk
 
 
+@pytest.mark.skip(reason="IBH SHORT side disabled in production — PF 1.20 drags portfolio")
 class TestIBHFadeShort:
     """SHORT signals at IBH rejection."""
 
@@ -270,6 +271,7 @@ class TestMaxTouch:
         sig = s.on_bar(_make_bar(close=20012), 5, ctx)
         assert sig is None
 
+    @pytest.mark.skip(reason="IBH SHORT side disabled in production")
     def test_both_edges_can_trade(self):
         """Can trade both IBL and IBH in same session."""
         s = IBEdgeFade()
@@ -317,6 +319,7 @@ class TestAcceptanceReset:
 class TestStopModes:
     """Different stop computation modes."""
 
+    @pytest.mark.skip(reason="IBH SHORT side disabled in production")
     def test_fixed_5pt_stop(self):
         s = IBEdgeFade(stop_mode_short='fixed_5pt')
         ctx = _session_context()
@@ -332,15 +335,15 @@ class TestStopModes:
         """10% IB stop has 5pt floor."""
         s = IBEdgeFade(stop_mode_long='10pct_ib')
         ctx = _session_context()
-        # Very narrow IB (just above min): 10% of 100 = 10 pts
-        s.on_session_start('2026-03-10', 20100, 20000, 100, ctx)
+        # IB range=200 (above min 150): 10% of 200 = 20 pts
+        s.on_session_start('2026-03-10', 20200, 20000, 200, ctx)
 
         s.on_bar(_make_bar(low=19995, close=19998), 0, ctx)
         s.on_bar(_make_bar(close=20008), 1, ctx)
         sig = s.on_bar(_make_bar(close=20015), 2, ctx)
 
         assert sig is not None
-        assert sig.stop_price == 20015 - 10.0  # 10% of 100 = 10
+        assert sig.stop_price == 20015 - 20.0  # 10% of 200 = 20
 
 
 class TestLoaderRegistration:

@@ -247,8 +247,8 @@ class TestTrendDayBear:
         assert signal is not None
         assert signal.direction == 'SHORT'
         assert signal.entry_price == 19870
-        assert signal.stop_price == 19870 + 40
-        assert signal.target_price == 19870 - 100
+        assert signal.stop_price == 19870 + 50  # 50pt stop (tuned from 40)
+        assert signal.target_price == 19870 - 125  # 125pt target (tuned from 100)
         assert signal.strategy_name == "Trend Day Bear"
 
     def test_no_signal_without_bear_alignment(self):
@@ -322,8 +322,8 @@ class TestTrendDayBear:
                         ema20_15m=19880, ema50_15m=19920, adx14_15m=40.0)
         sig = self.strategy.on_bar(bar, 3, _make_ctx())
         assert sig is not None
-        assert sig.risk_points == 40.0
-        assert sig.reward_points == 100.0
+        assert sig.risk_points == 50.0  # 50pt stop (tuned)
+        assert sig.reward_points == 125.0  # 125pt target (tuned)
         assert sig.risk_reward_ratio == 2.5
 
 

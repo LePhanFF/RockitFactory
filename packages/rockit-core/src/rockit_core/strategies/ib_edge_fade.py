@@ -46,7 +46,7 @@ from rockit_core.strategies.signal import Signal
 ENTRY_START = _time(10, 30)        # After IB close
 ENTRY_CUTOFF = _time(14, 0)        # No entries after 2 PM ET
 SHORT_ENTRY_START = _time(11, 0)   # SHORT: skip 10:30-11:00 (PF 0.77 in study)
-MIN_IB_RANGE = 100.0               # Skip narrow IB days (< 100 pts)
+MIN_IB_RANGE = 150.0               # Skip narrow IB days (< 150 pts). Study: 150+ = PF 1.83 vs 100+ = PF 1.57
 # Day types where LONG loses (study: trend_down PF 0.36)
 LONG_BLOCKED_DAY_TYPES = {'trend_down', 'Trend Down'}
 POKE_MIN_PTS_LONG = 3.0            # Min pts beyond IB edge (LONG)

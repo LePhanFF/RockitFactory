@@ -40,7 +40,7 @@ from rockit_core.strategies.signal import Signal
 ENTRY_START = _time(10, 30)        # After IB formation
 ENTRY_CUTOFF = _time(14, 0)        # No entries after 2 PM ET
 POKE_MIN_PTS = 5.0                 # Min pts beyond VA edge to count as poke
-ACCEPT_BARS = 2                    # N consecutive 5-min closes confirming fade
+ACCEPT_BARS = 3                    # N consecutive 5-min closes confirming fade (study: 3 bars = PF 2.07 vs 2 bars = PF 1.46)
 EDGE_BUFFER_PTS = 20.0             # Stop buffer beyond VA edge
 MAX_TOUCH_COUNT = 1                # Only first touch (per edge)
 MIN_VA_WIDTH_PTS = 0.0             # Minimum VA width (0 = no filter)
