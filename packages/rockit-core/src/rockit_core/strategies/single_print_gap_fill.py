@@ -78,7 +78,7 @@ class SinglePrintGapFill(StrategyBase):
         # Extract single print zones from tpo_data or prior_day
         raw_zones = self._extract_single_print_zones(session_context)
 
-        # Filter zones: >= 10 ticks, classify direction based on VA location
+        # Filter zones: >= 10 ticks, use enrichment's pre-computed location
         for zone in raw_zones:
             zone_high = zone['high']
             zone_low = zone['low']
@@ -89,19 +89,25 @@ class SinglePrintGapFill(StrategyBase):
             if zone_size_ticks < MIN_ZONE_TICKS:
                 continue
 
-            # Classify zone location for directional signal
-            # Above VAH -> SHORT fill (price fills down from above VAH)
-            # Below VAL -> LONG fill (price fills up from below VAL)
-            # Within VA -> direction based on zone vs close
-            if prior_vah is not None and not (isinstance(prior_vah, float) and pd.isna(prior_vah)):
-                if zone_low >= prior_vah:
-                    location = 'above_vah'
-                elif prior_val is not None and not (isinstance(prior_val, float) and pd.isna(prior_val)) and zone_high <= prior_val:
-                    location = 'below_val'
+            # Use enrichment's pre-computed location field
+            # (enrichment classifies as above_vah/below_val/within_va/unknown)
+            location = zone.get('location', '')
+
+            # Fallback: re-compute if enrichment didn't provide location
+            if not location or location == 'unknown':
+                if prior_vah is not None and not (isinstance(prior_vah, float) and pd.isna(prior_vah)):
+                    if zone_low >= prior_vah:
+                        location = 'above_vah'
+                    elif prior_val is not None and not (isinstance(prior_val, float) and pd.isna(prior_val)) and zone_high <= prior_val:
+                        location = 'below_val'
+                    else:
+                        location = 'within_va'
                 else:
-                    continue  # within VA — skip for now
-            else:
-                continue  # no VA data — can't classify
+                    location = 'unknown'
+
+            # Only trade zones outside VA (above_vah or below_val)
+            if location not in ('above_vah', 'below_val'):
+                continue
 
             self._zones.append({
                 'high': zone_high,

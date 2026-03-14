@@ -164,7 +164,7 @@ research_strategies:
 
   single_print_gap_fill:
     enabled: false
-    description: "SP Gap Fill — DISABLED: PF 0.95, zone detection mismatch with study (30.4% WR vs study 69.2%)"
+    description: "SP Gap Fill — zone extraction fixed but WR 30.4% (study 69.2%). Detection algorithm mismatch — needs quant study"
     day_types: [all]
     direction: both
 
