@@ -77,6 +77,7 @@ class BacktestEngine:
         risk_per_trade: float = DEFAULT_MAX_RISK_PER_TRADE,
         max_contracts: int = DEFAULT_MAX_CONTRACTS,
         session_bias_lookup: Optional[Dict[str, str]] = None,
+        trail_configs: Optional[Dict[str, dict]] = None,
     ):
         self.instrument = instrument
         self.strategies = strategies
@@ -86,6 +87,7 @@ class BacktestEngine:
         self.risk_per_trade = risk_per_trade
         self.max_contracts = max_contracts
         self.session_bias_lookup = session_bias_lookup or {}
+        self.trail_configs = trail_configs or {}
 
     def run(self, df: pd.DataFrame, verbose: bool = True) -> BacktestResult:
         """Run the backtest on the provided DataFrame."""
@@ -649,6 +651,16 @@ class BacktestEngine:
 
             # Update MAE/MFE before checking stop/target
             pos.update_excursions(bar['low'], bar['high'])
+
+            # ATR-based trailing stop (per-strategy config from strategies.yaml)
+            trail_cfg = self.trail_configs.get(pos.strategy_name)
+            if trail_cfg:
+                atr_col = f"atr_{trail_cfg['atr_period']}"
+                atr_val = bar.get(atr_col) if atr_col in bar.index else bar.get('atr14')
+                if atr_val and not pd.isna(atr_val) and atr_val > 0:
+                    act_dist = atr_val * trail_cfg['activate_mult']
+                    trail_dist = atr_val * trail_cfg['trail_mult']
+                    pos.trail_by_atr(bar['high'], bar['low'], act_dist, trail_dist)
 
             # Trend strategy trailing: trail by 1.0x IB range from session extreme
             # This locks in profit as the trend extends while giving enough room
