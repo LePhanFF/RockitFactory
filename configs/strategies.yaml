@@ -38,12 +38,16 @@ core_strategies:
     description: "Balance Day — mean reversion within IB range"
     day_types: [BDay]
     direction: both
+    trail:
+      enabled: false         # study showed trailing hurts B-Day (mean reversion needs room)
 
   eighty_percent_rule:
     enabled: true
     description: "80% Rule — mean reversion to Value Area after 80p breakout"
     day_types: [BDay, Neutral]
     direction: both
+    trail:
+      enabled: false         # study showed trailing hurts 80P (wide stop strategy)
 
   mean_reversion_vwap:
     enabled: false
@@ -62,18 +66,30 @@ core_strategies:
     description: "Opening Range Reversal (Judas Swing) — sweep + reversal at open"
     day_types: [all]
     direction: both
+    trail:
+      enabled: true
+      atr_period: 15
+      activate_mult: 1.5    # activate after 1.5x ATR(15) favorable move (~29pts)
+      trail_mult: 0.5       # trail 0.5x ATR(15) behind HWM (~10pts)
 
   or_acceptance:
     enabled: true
     description: "OR Acceptance v3 — level break + limit retest at acceptance level"
     day_types: [all]
     direction: both
+    trail:
+      enabled: true
+      atr_period: 15
+      activate_mult: 1.5    # activate after 1.5x ATR(15) favorable move (~29pts)
+      trail_mult: 0.5       # trail 0.5x ATR(15) behind HWM (~10pts)
 
   twenty_percent_rule:
     enabled: true
     description: "20P IB Extension — 3x5-min acceptance beyond IB boundary, 2xATR stop, 2R target"
     day_types: [all]
     direction: both
+    trail:
+      enabled: false         # study showed trailing hurts 20P (cuts wide-stop winners)
 
 # Research strategies (Phase 1b)
 research_strategies:

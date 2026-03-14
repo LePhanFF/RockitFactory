@@ -121,6 +121,31 @@ class OpenPosition:
             if new_stop < self.trailing_stop:
                 self.trailing_stop = new_stop
 
+    def trail_by_atr(self, bar_high: float, bar_low: float,
+                     activate_distance: float, trail_distance: float) -> None:
+        """ATR-based trailing stop — activates after a meaningful move, then trails.
+
+        Only ratchets the stop (never moves it away from price).
+
+        Args:
+            bar_high: Current bar high.
+            bar_low: Current bar low.
+            activate_distance: Minimum favorable excursion (pts) to activate trail.
+            trail_distance: Distance behind high-water mark (pts) for trail.
+        """
+        if self.direction == 'LONG':
+            hwm = bar_high - self.entry_price
+            if hwm >= activate_distance:
+                new_stop = self.entry_price + hwm - trail_distance
+                if new_stop > self.trailing_stop:
+                    self.trailing_stop = new_stop
+        else:
+            hwm = self.entry_price - bar_low
+            if hwm >= activate_distance:
+                new_stop = self.entry_price - hwm + trail_distance
+                if new_stop < self.trailing_stop:
+                    self.trailing_stop = new_stop
+
 
 class PositionManager:
     """

@@ -126,3 +126,39 @@ def load_strategies_from_config(config_path: str | Path) -> list[StrategyBase]:
                 strategies.append(cls())
 
     return strategies
+
+
+def load_trail_configs(config_path: str | Path) -> dict[str, dict]:
+    """Load per-strategy trailing stop configs from strategies.yaml.
+
+    Returns:
+        Dict mapping strategy display name -> trail config dict.
+        Only includes strategies with trail.enabled = true.
+    """
+    _ensure_registry()
+
+    config_path = Path(config_path)
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    trail_configs = {}
+
+    for section in ['core_strategies', 'research_strategies']:
+        section_config = config.get(section, {})
+        for name, settings in section_config.items():
+            if not settings.get('enabled', False):
+                continue
+            trail = settings.get('trail')
+            if not trail or not trail.get('enabled', False):
+                continue
+            cls = _STRATEGY_REGISTRY.get(name)
+            if cls is None:
+                continue
+            strat_name = cls().name
+            trail_configs[strat_name] = {
+                'atr_period': trail.get('atr_period', 15),
+                'activate_mult': trail.get('activate_mult', 1.5),
+                'trail_mult': trail.get('trail_mult', 0.5),
+            }
+
+    return trail_configs

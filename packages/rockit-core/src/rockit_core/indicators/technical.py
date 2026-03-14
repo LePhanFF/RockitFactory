@@ -204,6 +204,7 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['ema20'] = calculate_ema(df['close'], 20)
     df['ema50'] = calculate_ema(df['close'], 50)
     df['atr14'] = calculate_atr(df, 14)
+    df['atr_15'] = calculate_atr(df, 15)  # for ATR-based trailing stops
     df['adx14'] = calculate_adx(df, 14)
 
     # Mean reversion indicators
