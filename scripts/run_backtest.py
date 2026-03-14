@@ -368,12 +368,23 @@ def main():
     except Exception as e:
         print(f"Note: Could not load session bias from DuckDB: {e}")
 
+    # --- Load trailing stop configs ---
+    trail_configs = {}
+    try:
+        from rockit_core.strategies.loader import load_trail_configs
+        trail_configs = load_trail_configs(config_path)
+        if trail_configs:
+            print(f"Trailing stops enabled for: {', '.join(trail_configs.keys())}")
+    except Exception as e:
+        print(f"Note: Could not load trail configs: {e}")
+
     # --- Run backtest ---
     inst_spec = get_instrument(instrument)
     engine = BacktestEngine(
         instrument=inst_spec,
         strategies=strategies,
         session_bias_lookup=session_bias_lookup,
+        trail_configs=trail_configs,
     )
 
     result = engine.run(df, verbose=True)

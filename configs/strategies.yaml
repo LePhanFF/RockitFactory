@@ -8,12 +8,16 @@ core_strategies:
     description: "Trend Day Bull — 15m EMA-aligned VWAP/EMA pullback, 40pt stop, 100pt target"
     day_types: [all]
     direction: long
+    trail:
+      enabled: false         # 100pt target on trend days needs patience — trail kills the move
 
   trend_bear:
     enabled: true
-    description: "Trend Day Bear — 15m EMA-aligned VWAP/EMA rejection, 40pt stop, 100pt target"
+    description: "Trend Day Bear — 15m EMA-aligned VWAP/EMA rejection, 50pt stop, 125pt target"
     day_types: [all]
     direction: short
+    trail:
+      enabled: false         # 125pt target on trend days needs patience — trail kills the move
 
   super_trend_bull:
     enabled: false
@@ -134,6 +138,8 @@ research_strategies:
     description: "NWOG Gap Fill — Monday weekly gap fill with VWAP + acceptance filters"
     day_types: [all]
     direction: both
+    trail:
+      enabled: false         # gap fill needs to run to Friday close target — trail kills it
 
   pdh_pdl_reaction:
     enabled: true
@@ -145,12 +151,16 @@ research_strategies:
     target_mode: 2r
     require_bias_alignment: true
     poke_min: 5
+    trail:
+      enabled: false         # outsized winners ($2,508 avg) need room — trail cuts $35K
 
   ndog_gap_fill:
     enabled: true
     description: "NDOG Gap Fill — daily overnight gap fill with VWAP confirmation"
     day_types: [all]
     direction: both
+    trail:
+      enabled: false         # gap fill needs to reach prior close — trail cuts the fill
 
   single_print_gap_fill:
     enabled: false
@@ -187,12 +197,16 @@ research_strategies:
     description: "VA Edge Fade — SHORT-only at prior VAH rejection, edge+20 stop, 3R target"
     day_types: [all]
     direction: short
+    trail:
+      enabled: false         # 3.96:1 win/loss ratio requires letting winners run to 3R target
 
   ib_edge_fade:
     enabled: true
-    description: "IB Edge Fade — fade IBL rejection LONG only (PF 1.57), SHORT disabled (PF 1.20)"
+    description: "IB Edge Fade — fade IBL rejection LONG only (PF 1.84), SHORT disabled (PF 1.20)"
     day_types: [all]
     direction: long
+    trail:
+      enabled: false         # marginal benefit (+$1.8K, 12% activate) — not worth the complexity
 
   ib_retracement:
     enabled: false
