@@ -81,7 +81,7 @@ class TestVAHFadeShort:
     """SHORT signals at VAH rejection."""
 
     def test_vah_fade_short_signal(self):
-        """Price pokes above VAH, then 2 bars close below -> SHORT."""
+        """Price pokes above VAH, then 3 bars close below -> SHORT."""
         s = VAEdgeFade()
         ctx = _session_context(prior_vah=20100.0, prior_val=19900.0)
         s.on_session_start('2026-03-10', 20050, 19950, 100, ctx)
@@ -94,15 +94,20 @@ class TestVAHFadeShort:
         # Bar 1: first bar closing below VAH
         bar1 = _make_bar(open_=20102, high=20104, low=20088, close=20092)
         sig = s.on_bar(bar1, 1, ctx)
-        assert sig is None  # Only 1 accept bar, need 2
+        assert sig is None  # Only 1 accept bar, need 3
 
-        # Bar 2: second bar closing below VAH -> signal
+        # Bar 2: second bar closing below VAH
         bar2 = _make_bar(open_=20090, high=20095, low=20080, close=20085)
         sig = s.on_bar(bar2, 2, ctx)
+        assert sig is None  # Only 2 accept bars, need 3
+
+        # Bar 3: third bar closing below VAH -> signal
+        bar3 = _make_bar(open_=20083, high=20088, low=20075, close=20080)
+        sig = s.on_bar(bar3, 3, ctx)
         assert sig is not None
         assert sig.direction == 'SHORT'
         assert sig.setup_type == 'VAH_EDGE_FADE'
-        assert sig.entry_price == 20085
+        assert sig.entry_price == 20080
         assert sig.metadata['level'] == 'VAH'
         assert sig.metadata['touch_number'] == 1
 
@@ -112,10 +117,11 @@ class TestVAHFadeShort:
         ctx = _session_context(prior_vah=20100.0, prior_val=19900.0)
         s.on_session_start('2026-03-10', 20050, 19950, 100, ctx)
 
-        # Poke + 2 accept bars
+        # Poke + 3 accept bars
         s.on_bar(_make_bar(high=20108, close=20105), 0, ctx)
         s.on_bar(_make_bar(close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
 
         assert sig is not None
         assert sig.stop_price == 20100 + EDGE_BUFFER_PTS  # 20120
@@ -128,10 +134,11 @@ class TestVAHFadeShort:
 
         s.on_bar(_make_bar(high=20108, close=20105), 0, ctx)
         s.on_bar(_make_bar(close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
 
         assert sig is not None
-        risk = sig.stop_price - sig.entry_price  # 20120 - 20085 = 35
+        risk = sig.stop_price - sig.entry_price  # 20120 - 20080 = 40
         expected_target = sig.entry_price - 3.0 * risk
         assert sig.target_price == expected_target
 
@@ -150,8 +157,11 @@ class TestVAHFadeShort:
         # 1 accept bar again
         s.on_bar(_make_bar(close=20090), 3, ctx)
         assert s._vah_accept_count == 1
-        # 2nd accept bar -> signal
-        sig = s.on_bar(_make_bar(close=20085), 4, ctx)
+        # 2nd accept bar
+        s.on_bar(_make_bar(close=20085), 4, ctx)
+        assert s._vah_accept_count == 2
+        # 3rd accept bar -> signal
+        sig = s.on_bar(_make_bar(close=20080), 5, ctx)
         assert sig is not None
 
     def test_spike_tracking(self):
@@ -164,7 +174,8 @@ class TestVAHFadeShort:
         s.on_bar(_make_bar(high=20108, close=20105), 0, ctx)
         # Higher spike at 20115
         s.on_bar(_make_bar(high=20115, close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
 
         assert sig is not None
         assert sig.metadata['spike_high'] == 20115
@@ -174,7 +185,7 @@ class TestVALFadeLong:
     """LONG signals at VAL rejection (when short_only=False)."""
 
     def test_val_fade_long_signal(self):
-        """Price pokes below VAL, then 2 bars close above -> LONG."""
+        """Price pokes below VAL, then 3 bars close above -> LONG."""
         s = VAEdgeFade(short_only=False)
         ctx = _session_context(prior_vah=20100.0, prior_val=19900.0)
         s.on_session_start('2026-03-10', 20050, 19950, 100, ctx)
@@ -189,9 +200,14 @@ class TestVALFadeLong:
         sig = s.on_bar(bar1, 1, ctx)
         assert sig is None
 
-        # Accept bar 2 -> signal
+        # Accept bar 2
         bar2 = _make_bar(open_=19908, high=19920, low=19905, close=19915)
         sig = s.on_bar(bar2, 2, ctx)
+        assert sig is None  # Only 2 accept bars, need 3
+
+        # Accept bar 3 -> signal
+        bar3 = _make_bar(open_=19915, high=19925, low=19912, close=19920)
+        sig = s.on_bar(bar3, 3, ctx)
         assert sig is not None
         assert sig.direction == 'LONG'
         assert sig.setup_type == 'VAL_EDGE_FADE'
@@ -205,7 +221,8 @@ class TestVALFadeLong:
 
         s.on_bar(_make_bar(low=19892, close=19895), 0, ctx)
         s.on_bar(_make_bar(close=19908), 1, ctx)
-        sig = s.on_bar(_make_bar(close=19915), 2, ctx)
+        s.on_bar(_make_bar(close=19915), 2, ctx)
+        sig = s.on_bar(_make_bar(close=19920), 3, ctx)
 
         assert sig is not None
         assert sig.stop_price == 19900 - EDGE_BUFFER_PTS  # 19880
@@ -223,7 +240,8 @@ class TestShortOnlyFilter:
         # Poke below VAL
         s.on_bar(_make_bar(low=19892, close=19895), 0, ctx)
         s.on_bar(_make_bar(close=19908), 1, ctx)
-        sig = s.on_bar(_make_bar(close=19915), 2, ctx)
+        s.on_bar(_make_bar(close=19915), 2, ctx)
+        sig = s.on_bar(_make_bar(close=19920), 3, ctx)
 
         assert sig is None  # Blocked by short_only
 
@@ -307,7 +325,8 @@ class TestMaxTouch:
         # Need to make the poke fail somehow — actually the poke just stays
         # active, so let's test by having the first poke traded
         s.on_bar(_make_bar(close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
         assert sig is not None  # First touch traded
 
         # VAH is now marked as traded, no more signals at VAH
@@ -329,7 +348,8 @@ class TestStopModes:
 
         s.on_bar(_make_bar(high=20108, close=20105), 0, ctx)
         s.on_bar(_make_bar(close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
 
         assert sig is not None
         assert sig.stop_price == 20100 + 10.0  # 20110
@@ -341,10 +361,11 @@ class TestStopModes:
 
         s.on_bar(_make_bar(high=20108, close=20105), 0, ctx)
         s.on_bar(_make_bar(close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
 
         assert sig is not None
-        assert sig.stop_price == 20085 + 2.0 * 25.0  # 20135
+        assert sig.stop_price == 20080 + 2.0 * 25.0  # 20130
 
 
 class TestTargetModes:
@@ -357,7 +378,8 @@ class TestTargetModes:
 
         s.on_bar(_make_bar(high=20108, close=20105), 0, ctx)
         s.on_bar(_make_bar(close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
 
         risk = sig.stop_price - sig.entry_price
         assert sig.target_price == sig.entry_price - 2.0 * risk
@@ -369,7 +391,8 @@ class TestTargetModes:
 
         s.on_bar(_make_bar(high=20108, close=20105), 0, ctx)
         s.on_bar(_make_bar(close=20092), 1, ctx)
-        sig = s.on_bar(_make_bar(close=20085), 2, ctx)
+        s.on_bar(_make_bar(close=20085), 2, ctx)
+        sig = s.on_bar(_make_bar(close=20080), 3, ctx)
 
         assert sig is not None
         assert sig.target_price == 20000.0  # POC
