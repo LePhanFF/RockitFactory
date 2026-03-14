@@ -2300,3 +2300,113 @@ FUTURE (with trained LLM analyst):
 The expert domain refactoring strengthens the DETERMINISTIC foundation — the expert witnesses become more specialized and articulate. This is prerequisite work before training the LLM analyst (Phase B in the Courtroom phasing). Better expert testimony means better training data for the analyst, which means better arguments for the lawyers, which means better decisions from the judge.
 
 **Key principle**: Train the experts BEFORE training the analyst. The analyst learns from expert output. If expert output is coarse (9 cards), the analyst learns coarse patterns. If expert output is rich (24 cards), the analyst learns nuanced patterns.
+
+---
+
+## Phase 6: Trend Day & Double Distribution Strategies (from 2026-03-13 session review)
+
+> **Date added**: 2026-03-13
+> **Trigger**: Live session review — textbook double distribution trend day down. System detected the structure (B_shape, distributions.count=2, morph=neutral_to_bearish at 1.0 confidence) but had ZERO strategies to trade it. Only signal was OR Acceptance LONG which lost $283.
+> **Priority**: HIGH — trend days are the highest-expectancy sessions per strategy studies (58% WR, 2.8 PF, $1,465/day target)
+
+### What We Already Have (Deterministic Detection)
+
+The detection pipeline **already works** for today's session:
+
+| Module | What It Detected | When |
+|--------|-----------------|------|
+| `_detect_distributions()` in `tpo_profile.py` | `B_shape`, `distributions.count=2`, separation at ~24600, upper POC 24672, lower POC 24436 | By 11:00 |
+| `balance_classification.py` morph | `neutral_to_bearish`, confidence 1.0, 6/6 signals confirmed | By 13:00 |
+| `cri.py` reclaim tracking | All 4 level reclaims FAILED (IBH, IBL, VAH, VAL) | By 11:00 |
+| `cri.py` bear trap | Bear Trap detected from open | 09:30 |
+| IB extension | Close below IBL, extension down >0.5x | By 10:45 |
+
+**The gap is not detection. The gap is that no strategy converts these signals into trades.**
+
+### What We Need to Build
+
+#### Study 1: Bear Accept Strategy (IBL Acceptance Short)
+
+**Concept**: Classic Dalton — when price breaks below IBL and the 30-min candle closes below, the market is accepting lower value. Short near IBL on the first retest/bounce.
+
+**Entry model**:
+1. IB must be complete (after 10:30)
+2. 30-min candle closes below IBL (C-period or later)
+3. Entry: short on bounce back toward IBL (limit at IBL or IBL - small buffer)
+4. Alternative: short on close of the 30-min acceptance candle
+
+**Filters**:
+- IB range must be >= 100 pts (extreme or wide — narrow IB breakdowns often reverse)
+- Reclaim status of IBL should be `failed_reclaim` (price tried to reclaim and failed)
+- Day should NOT be classified as B-Day (balance days probe both sides)
+- Prior session context: NOT after 3+ consecutive balance days (breakout fakeouts)
+
+**Stop**: Above IBH or above the bounce high (whichever is tighter)
+**Target**: London low, prior day low, or 1.0x IB extension below IBL
+
+**Backtest priority**: This is the most mechanically clean setup. We have 270 sessions — need to find how many had 30-min close below IBL and what happened next.
+
+**Quant study**: `/quant-study bear-accept` — scan all sessions for IBL acceptance events, measure excursion, optimal stop/target.
+
+#### Study 2: Double Distribution Trend Continuation
+
+**Concept**: When deterministic detects `distributions.count == 2` AND morph is `neutral_to_bearish` (or `neutral_to_bullish`), the market has created a second value area. The move from the first distribution to the second is the trade.
+
+**Why this is different from Trend Day Bull/Bear**: Those strategies tried to enter on pullbacks during a trend (FVG, VWAP, EMA). This strategy enters AFTER the double distribution is confirmed — it's a continuation/acceptance play, not a pullback play.
+
+**Entry model (bearish)**:
+1. `distributions.count == 2` detected (from `_detect_distributions()`)
+2. `morph.morph_type == 'neutral_to_bearish'` with confidence >= 0.7
+3. `separation_level` gives the LVN between distributions — this is the "no man's land"
+4. Entry: short on any bounce into the separation zone (price returning to the thin area between distributions)
+5. Alternative: short on first 5-min close below `lower_poc` of new distribution
+
+**Filters**:
+- Single prints above VAH (confirms one-directional selling — already detected)
+- DPOC must be migrating down (already tracked in `dpoc_migration`)
+- Close must be in lower third of IB (already tracked)
+
+**Stop**: Above separation level + buffer (above the LVN)
+**Target**: Extension of the second distribution (1.0x the distance from separation to lower_poc, projected below)
+
+**Backtest priority**: Medium. Need to first check how often `distributions.count == 2` fires across 270 sessions and what the edge looks like.
+
+**Quant study**: `/quant-study double-distribution` — find all B_shape sessions, measure separation level quality, subsequent extension, optimal entry timing.
+
+#### Study 3: Trend Day Bull/Bear Re-Optimization (from roadmap A1)
+
+**Already documented in `brainstorm/12-strategy-expansion-roadmap.md`** section A1. The key fixes are:
+1. Add 15-min EMA filter (price > EMA20 > EMA50 for bull)
+2. Remove day_type gate (allow on any session once trend confirmed)
+3. Restore EMA20 pullback entry with order flow quality gate
+4. Add ADX > 25 filter on 15-min
+5. Add trailing stop (20-period EMA on 5-min after +1.0x IB)
+
+**Relationship to Study 1 & 2**: Bear Accept is the *entry trigger* (IBL acceptance). Double Distribution is the *confirmation* (structure has formed). Trend Day strategy is the *execution model* (pullback entries within the trend). They can be composed:
+- Bear Accept fires first (10:30-11:00, IBL acceptance)
+- Double Distribution confirms later (11:00-13:00, second distribution forms)
+- Trend continuation entries fire within the established trend (if pullbacks occur)
+
+### Study Execution Order
+
+```
+1. /quant-study bear-accept        ← Highest priority, most mechanical
+2. /quant-study double-distribution ← Validate detection quality + edge
+3. Re-optimize Trend Day Bull/Bear  ← Biggest potential but most complex
+```
+
+### What Today (2026-03-13) Would Have Looked Like
+
+If Bear Accept existed:
+- **10:45**: 30-min close confirmed below IBL (24611). NinjaTrader indicator caught this — triggered 20P short.
+- **Entry**: ~24611 (IBL area)
+- **Stop**: ~24665 (54 pts above entry, your NinjaTrader showed 53 pts risk — almost identical)
+- **Target**: London Low 24397 (214 pts) or 1.0x IB extension = 24417 (194 pts)
+- **Actual move**: Price hit London Low area by 12:00. ~200 pts / $4,000 per contract.
+
+If Double Distribution strategy existed:
+- **11:00**: B_shape detected, distributions.count=2, separation at 24602
+- **Entry**: Short on bounce into separation zone (24600-24610 area)
+- **Stop**: Above 24640 (above separation + buffer)
+- **Target**: Lower POC projection → 24435 area
+- **Actual result**: DPOC settled at 24436. Target hit. ~165 pts / $3,300 per contract.

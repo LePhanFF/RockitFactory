@@ -41,6 +41,15 @@ _CONFIG_KEY_TO_MODULE: dict[str, tuple[str, str]] = {
     "twenty_percent_rule": ("rockit_core.strategies.twenty_percent_rule", "TwentyPercentRule"),
     "nwog_gap_fill": ("rockit_core.strategies.nwog_gap_fill", "NWOGGapFill"),
     "pdh_pdl_reaction": ("rockit_core.strategies.pdh_pdl_reaction", "PDHPDLReaction"),
+    "ndog_gap_fill": ("rockit_core.strategies.ndog_gap_fill", "NDOGGapFill"),
+    "single_print_gap_fill": ("rockit_core.strategies.single_print_gap_fill", "SinglePrintGapFill"),
+    "poor_highlow_repair": ("rockit_core.strategies.poor_highlow_repair", "PoorHighLowRepair"),
+    "cvd_divergence": ("rockit_core.strategies.cvd_divergence", "CVDDivergence"),
+    "rth_gap_fill": ("rockit_core.strategies.rth_gap_fill", "RTHGapFill"),
+    "double_distribution": ("rockit_core.strategies.double_distribution", "DoubleDistributionStrategy"),
+    "va_edge_fade": ("rockit_core.strategies.va_edge_fade", "VAEdgeFade"),
+    "ib_edge_fade": ("rockit_core.strategies.ib_edge_fade", "IBEdgeFade"),
+    "ib_retracement": ("rockit_core.strategies.ib_retracement", "IBRetracement"),
 }
 
 
@@ -83,6 +92,9 @@ RESEARCH_STRATEGIES = [
     "neutral_day", "pm_morph", "morph_to_trend",
     "orb_vwap_breakout", "ema_trend_follow", "liquidity_sweep",
     "nwog_gap_fill", "pdh_pdl_reaction",
+    "ndog_gap_fill", "single_print_gap_fill", "poor_highlow_repair",
+    "cvd_divergence", "rth_gap_fill", "double_distribution",
+    "va_edge_fade", "ib_edge_fade", "ib_retracement",
 ]
 
 

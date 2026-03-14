@@ -117,6 +117,13 @@ class BacktestEngine:
         prior_session_context = {}  # Tracks prior session info for context
         self._ib_range_history = []  # Rolling IB ranges for adaptive thresholds
 
+        # Pre-compute session enrichment data (single prints, etc.)
+        try:
+            from rockit_core.indicators.session_enrichment import enrich_prior_session_data
+            self._session_enrichment = enrich_prior_session_data(df)
+        except Exception:
+            self._session_enrichment = {}
+
         total_sessions = len(sessions)
         for idx, session_date in enumerate(sessions):
             session_df = df[df['session_date'] == session_date].copy()
@@ -322,6 +329,19 @@ class BacktestEngine:
         atr = session_context.get('atr14', 0.0)
         confidence_scorer.on_session_start(ib_high, ib_low, ib_range, atr)
 
+        # --- Phase 3c: Inject session enrichment (single prints, etc.) ---
+        # Try both normalized and raw key formats
+        enrichment_key = session_str.split(" ")[0].split("T")[0]
+        enrichment = self._session_enrichment.get(enrichment_key) or self._session_enrichment.get(session_str, {})
+        if enrichment:
+            session_context.setdefault('prior_day', {})
+            if isinstance(session_context['prior_day'], dict):
+                session_context['prior_day'].update(enrichment)
+            # Also put in tpo_data for backward compat
+            session_context.setdefault('tpo_data', {})
+            if isinstance(session_context['tpo_data'], dict):
+                session_context['tpo_data'].update(enrichment)
+
         # --- Phase 4: Notify strategies ---
         active_strategies = []
         for strategy in self.strategies:
@@ -337,6 +357,12 @@ class BacktestEngine:
         # Track session high/low for trailing stops
         session_high = ib_high
         session_low = ib_low
+
+        # --- Phase 4b: Pre-IB bar signals (gap fill strategies enter during IB) ---
+        self._process_pre_ib_bars(
+            ib_df, active_strategies, session_context, session_str,
+            result, session_high, session_low, ib_range,
+        )
 
         # --- Phase 5: Bar-by-bar after IB ---
         for bar_idx in range(len(post_ib_df)):
@@ -456,6 +482,94 @@ class BacktestEngine:
         # --- Phase 7: Notify strategies ---
         for strategy in active_strategies:
             strategy.on_session_end(session_str)
+
+    def _process_pre_ib_bars(
+        self,
+        ib_df: pd.DataFrame,
+        active_strategies: List[StrategyBase],
+        session_context: dict,
+        session_str: str,
+        result: BacktestResult,
+        session_high: float,
+        session_low: float,
+        ib_range: float,
+    ) -> None:
+        """Process IB bars through on_pre_ib_bar() for early-entry strategies.
+
+        Called after on_session_start() but before the post-IB bar loop.
+        Strategies that need to enter before IB close (e.g., gap fill)
+        implement on_pre_ib_bar() and return a Signal.
+
+        Signal processing (filters, execution) mirrors the post-IB logic.
+        Position management also runs on each pre-IB bar so stops/targets
+        are checked if a pre-IB entry was made.
+        """
+        for bar_idx in range(len(ib_df)):
+            bar = ib_df.iloc[bar_idx]
+            timestamp = bar['timestamp'] if 'timestamp' in bar.index else ib_df.index[bar_idx]
+            bar_time = timestamp.time() if hasattr(timestamp, 'time') else None
+
+            # Build a partial session context for pre-IB bars
+            pre_ib_ctx = dict(session_context)
+            pre_ib_ctx['bar_time'] = bar_time
+            pre_ib_ctx['current_price'] = bar['close']
+            if 'vwap' in bar.index:
+                pre_ib_ctx['vwap'] = bar['vwap']
+
+            # Manage any positions opened by earlier pre-IB signals
+            if self.position_mgr.has_open_positions():
+                closed_trades = self._manage_positions(
+                    bar, timestamp, session_str, bar_time,
+                    session_high=session_high, session_low=session_low,
+                    ib_range=ib_range,
+                )
+                for trade in closed_trades:
+                    result.trades.append(trade)
+
+            # Check daily loss / trade limits before soliciting signals
+            if self.position_mgr.daily_loss_exceeded(session_str):
+                force_closed = self._force_close_all(bar, timestamp, session_str, 'DAILY_LOSS')
+                result.trades.extend(force_closed)
+                continue
+
+            if not self.position_mgr.can_open_trade(session_str):
+                continue
+
+            open_contracts = self.position_mgr.get_open_contracts()
+            if open_contracts >= self.max_contracts:
+                continue
+
+            # Ask each strategy for a pre-IB signal
+            for strategy in active_strategies:
+                signal = strategy.on_pre_ib_bar(bar, bar_idx, pre_ib_ctx)
+                if signal is None:
+                    continue
+
+                # Attach TPO snapshot at signal time
+                from rockit_core.engine.tpo_snapshot import generate_signal_tpo_snapshot
+                bar_time_str = bar_time.strftime('%H:%M') if bar_time else '09:30'
+                try:
+                    tpo_snap = generate_signal_tpo_snapshot(
+                        self._current_rth_df,
+                        bar_time_str,
+                        self._prior_day_for_tpo,
+                    )
+                    signal.metadata['tpo_at_entry'] = tpo_snap
+                except Exception:
+                    pass
+
+                result.signals_generated += 1
+
+                # Apply filters
+                if self.filters is not None:
+                    if not self.filters.should_trade(signal, bar, pre_ib_ctx):
+                        result.signals_filtered += 1
+                        continue
+
+                # Execute
+                trade = self._execute_signal(signal, bar, timestamp, session_str)
+                if trade is not None:
+                    result.signals_executed += 1
 
     @staticmethod
     def _compute_regime_bias(ctx: dict) -> str:

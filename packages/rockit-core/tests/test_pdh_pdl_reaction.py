@@ -286,10 +286,10 @@ class TestNoSignalConditions:
         sig = s.on_bar(bar, 0, ctx)
         assert sig is None
 
-    def test_no_signal_after_2pm(self):
-        """No signals after 14:00 ET."""
+    def test_no_signal_after_noon(self):
+        """No signals after 12:00 ET."""
         s = PDHPDLReaction(require_bias_alignment=False)
-        ctx = _session_context(bar_time=_time(14, 5))
+        ctx = _session_context(bar_time=_time(12, 5))
         s.on_session_start('2026-03-10', 20000, 19950, 50, ctx)
 
         bar = _make_bar(high=20058, close=20042)

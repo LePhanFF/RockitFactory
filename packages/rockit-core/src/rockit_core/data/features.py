@@ -221,4 +221,9 @@ def compute_all_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_overnight_levels(df)
     print("  Overnight/London/Asia levels computed")
 
+    # Technical indicators (EMA, ADX, BB, RSI, ATR, VWAP, CVD divergence)
+    from rockit_core.indicators.technical import add_all_indicators
+    df = add_all_indicators(df)
+    print("  Technical indicators computed (EMA, ADX, BB, RSI, VWAP, CVD)")
+
     return df

@@ -81,15 +81,15 @@ class TestCRIGateAgent:
         assert self.gate.passes(ctx) is True
         cards = self.gate.evaluate(ctx)
         assert len(cards) == 1
-        assert cards[0].strength == 1.0
+        assert cards[0].direction == "neutral"  # CRI scoring disabled — always neutral
 
-    def test_stand_down_soft_bearish(self):
-        """STAND_DOWN is a soft bearish signal, not a hard block."""
+    def test_stand_down_passthrough(self):
+        """STAND_DOWN is pass-through — CRI scoring disabled."""
         ctx = {"tape_row": {"cri_status": "STAND_DOWN"}}
-        assert self.gate.passes(ctx) is True  # Always passes now
+        assert self.gate.passes(ctx) is True
         cards = self.gate.evaluate(ctx)
-        assert cards[0].direction == "bearish"
-        assert cards[0].strength == 0.7
+        assert cards[0].direction == "neutral"
+        assert cards[0].strength == 0.0
 
     def test_missing_data_passes(self):
         ctx = {"tape_row": {}}
@@ -277,15 +277,15 @@ class TestDeterministicOrchestrator:
         # Conviction = |0.5 - 0.49| / (0.5 + 0.49) ≈ 0.01 < 0.1 → SKIP
         assert decision.decision == "SKIP"
 
-    def test_standdown_soft_evidence(self):
-        """STAND_DOWN contributes bearish evidence but doesn't hard-block."""
+    def test_standdown_passthrough_evidence(self):
+        """STAND_DOWN CRI is neutral pass-through — doesn't influence scoring."""
         cards = [
-            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN", "bearish", 0.7),
+            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN (pass-through)", "neutral", 0.0),
             EvidenceCard("c1", "obs", "certainty", "bullish signal", "bullish", 0.8),
         ]
         decision = self.orch.decide({"direction": "LONG"}, cards, gate_passed=True)
-        # STAND_DOWN adds bearish weight but doesn't auto-SKIP
-        assert decision.decision in ("TAKE", "SKIP", "REDUCE_SIZE")
+        # CRI neutral doesn't affect scoring — bullish signal passes through
+        assert decision.decision == "TAKE"
         assert decision.gate_passed is True
 
     def test_confluence_math(self):
@@ -682,9 +682,9 @@ class TestOrchestratorWithDebate:
         assert cards[1].strength == pytest.approx(0.7, abs=0.01)  # 1.0 * 0.7
 
     def test_standdown_with_debate_flows_through(self):
-        """STAND_DOWN with debate → bearish card flows into scoring, not hard block."""
+        """STAND_DOWN with debate → neutral CRI card, doesn't influence scoring."""
         cards = [
-            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN", "bearish", 0.7),
+            EvidenceCard("gate", "gate_cri", "certainty", "STAND_DOWN (pass-through)", "neutral", 0.0),
             EvidenceCard("c1", "obs", "certainty", "bullish", "bullish", 0.8),
         ]
         adv = DebateResult(agent="advocate", admit=["c1"], direction="bullish", confidence=0.8)

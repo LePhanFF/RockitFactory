@@ -4,15 +4,15 @@
 # Core strategies (proven profitable, Phase 1a)
 core_strategies:
   trend_bull:
-    enabled: false
-    description: "Trend Day Bull — pullback entries (FVG, VWAP, EMA, IBH retest)"
-    day_types: [Trend]
+    enabled: true
+    description: "Trend Day Bull — 15m EMA-aligned VWAP/EMA pullback, 40pt stop, 100pt target"
+    day_types: [all]
     direction: long
 
   trend_bear:
-    enabled: false
-    description: "Trend Day Bear — short equivalent of trend_bull"
-    day_types: [Trend]
+    enabled: true
+    description: "Trend Day Bear — 15m EMA-aligned VWAP/EMA rejection, 40pt stop, 100pt target"
+    day_types: [all]
     direction: short
 
   super_trend_bull:
@@ -114,7 +114,7 @@ research_strategies:
     direction: both
 
   nwog_gap_fill:
-    enabled: false
+    enabled: true
     description: "NWOG Gap Fill — Monday weekly gap fill with VWAP + acceptance filters"
     day_types: [all]
     direction: both
@@ -129,3 +129,57 @@ research_strategies:
     target_mode: 2r
     require_bias_alignment: true
     poke_min: 5
+
+  ndog_gap_fill:
+    enabled: true
+    description: "NDOG Gap Fill — daily overnight gap fill with VWAP confirmation"
+    day_types: [all]
+    direction: both
+
+  single_print_gap_fill:
+    enabled: false
+    description: "SP Gap Fill — DISABLED: PF 0.95, zone detection mismatch with study (30.4% WR vs study 69.2%)"
+    day_types: [all]
+    direction: both
+
+  poor_highlow_repair:
+    enabled: false
+    description: "Poor HL Repair — DISABLED: PF 1.09, 31 trades. Needs enrichment data fix for detection"
+    day_types: [all]
+    direction: long
+
+  cvd_divergence:
+    enabled: false
+    description: "CVD Divergence — DISABLED: PF 0.78, 19.4% WR. No config fix reaches PF 1.5"
+    day_types: [all]
+    direction: long
+
+  rth_gap_fill:
+    enabled: false
+    description: "RTH Gap Fill — DISABLED: PF 0.83-1.42 across configs. VWAP confirm = 14t PF 0.83; gap_2x = 102t PF 1.42"
+    day_types: [all]
+    direction: both
+
+  double_distribution:
+    enabled: false
+    description: "Double Distribution — DISABLED: PF 1.30, 31 trades. LONG side losing (-$337)"
+    day_types: [all]
+    direction: both
+
+  va_edge_fade:
+    enabled: true
+    description: "VA Edge Fade — SHORT-only at prior VAH rejection, edge+20 stop, 3R target"
+    day_types: [all]
+    direction: short
+
+  ib_edge_fade:
+    enabled: true
+    description: "IB Edge Fade — fade IBL rejection LONG only (PF 1.57), SHORT disabled (PF 1.20)"
+    day_types: [all]
+    direction: long
+
+  ib_retracement:
+    enabled: false
+    description: "IB Retracement — fib pullback after IB extension (REJECTED by study, all configs negative)"
+    day_types: [all]
+    direction: both

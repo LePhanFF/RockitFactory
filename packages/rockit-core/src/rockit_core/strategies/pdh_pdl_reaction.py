@@ -50,7 +50,7 @@ from rockit_core.strategies.signal import Signal
 
 # ── Parameters ────────────────────────────────────────────────
 ENTRY_START = _time(10, 0)         # No entries before 10 AM ET
-ENTRY_CUTOFF = _time(14, 0)        # No entries after 2 PM ET
+ENTRY_CUTOFF = _time(12, 0)        # No entries after 12 PM ET (study: 10-12 has 69.5% WR)
 MIN_PRIOR_RANGE = 50.0             # Minimum prior day range in pts
 MAX_TRADES_PER_SESSION = 2         # 1 PDH + 1 PDL max
 POKE_MIN_PTS = 5.0                 # Min spike beyond level (Setup A)
@@ -131,7 +131,8 @@ class PDHPDLReaction(StrategyBase):
         self._pdh_touched = False
         self._pdl_touched = False
 
-    def on_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
+    def _process_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
+        """Core bar processing logic shared by on_bar and on_pre_ib_bar."""
         # Skip if no prior day data
         if self._pdh is None or self._pdl is None:
             return None
@@ -144,7 +145,7 @@ class PDHPDLReaction(StrategyBase):
         if self._entry_count >= MAX_TRADES_PER_SESSION:
             return None
 
-        # Time filter: only 10:00-14:00 ET
+        # Time filter: only 10:00-12:00 ET
         bar_time = session_context.get('bar_time')
         if bar_time is not None:
             if bar_time < ENTRY_START or bar_time >= ENTRY_CUTOFF:
@@ -185,7 +186,7 @@ class PDHPDLReaction(StrategyBase):
                 return signal
 
         # ── Setup C: Reaction Touch at PDH ─────────────────────
-        if 'C' in self._setup_modes and not self._pdh_traded and not self._pdh_touched:
+        if 'C' in self._setup_modes and not self._pdh_traded:
             signal = self._check_reaction_touch_pdh(
                 bar, bar_index, current_price, bar_high, bar_low, bar_range,
                 session_context, bias, day_type
@@ -194,7 +195,7 @@ class PDHPDLReaction(StrategyBase):
                 return signal
 
         # ── Setup C: Reaction Touch at PDL ─────────────────────
-        if 'C' in self._setup_modes and not self._pdl_traded and not self._pdl_touched:
+        if 'C' in self._setup_modes and not self._pdl_traded:
             signal = self._check_reaction_touch_pdl(
                 bar, bar_index, current_price, bar_high, bar_low, bar_range,
                 session_context, bias, day_type
@@ -206,6 +207,13 @@ class PDHPDLReaction(StrategyBase):
         self._update_spike_tracking(bar_high, bar_low)
 
         return None
+
+    def on_pre_ib_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
+        """Process bars during IB formation (10:00-10:30 window)."""
+        return self._process_bar(bar, bar_index, session_context)
+
+    def on_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
+        return self._process_bar(bar, bar_index, session_context)
 
     # ── Setup A: Failed Auction ─────────────────────────────────
 
@@ -328,11 +336,9 @@ class PDHPDLReaction(StrategyBase):
 
     def _check_reaction_touch_pdh(self, bar, bar_index, price, high, low,
                                    bar_range, ctx, bias, day_type):
-        """Short on first touch and rejection at PDH."""
+        """Short on touch and rejection at PDH."""
         # Touch: high within proximity but not a full break (poke_min threshold)
         if high >= self._pdh - TOUCH_PROXIMITY_PTS and high < self._pdh + self._poke_min:
-            self._pdh_touched = True
-
             # Rejection: close in bottom 30% of bar range
             if bar_range > 0:
                 close_position = (price - low) / bar_range
@@ -372,10 +378,8 @@ class PDHPDLReaction(StrategyBase):
 
     def _check_reaction_touch_pdl(self, bar, bar_index, price, high, low,
                                    bar_range, ctx, bias, day_type):
-        """Long on first touch and rejection at PDL."""
+        """Long on touch and rejection at PDL."""
         if low <= self._pdl + TOUCH_PROXIMITY_PTS and low > self._pdl - self._poke_min:
-            self._pdl_touched = True
-
             # Rejection: close in top 30% of bar range (price bounced up)
             if bar_range > 0:
                 close_position = (price - low) / bar_range

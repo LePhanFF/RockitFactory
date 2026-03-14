@@ -1,8 +1,11 @@
 """
-Agent Pipeline — chains Gate → Observers → [Debate] → Orchestrator.
+Agent Pipeline — chains Gate → Domain Experts → [Debate] → Orchestrator.
 
 Same code runs inline (backtest, fast) and via HTTP (FastAPI wrapper).
 Debate layer is OPTIONAL — if disabled or LLM unreachable, falls back to deterministic.
+
+Supports both legacy observers (ProfileObserver, MomentumObserver) and
+new DomainExpert plug-ins (TpoExpert, VwapExpert, EmaExpert, etc.).
 """
 
 from __future__ import annotations
@@ -13,14 +16,21 @@ from rockit_core.agents.evidence import AgentDecision, DebateResult
 from rockit_core.agents.gate import CRIGateAgent
 from rockit_core.agents.llm_client import OllamaClient
 from rockit_core.agents.observers.momentum import MomentumObserver
-from rockit_core.agents.observers.profile import ProfileObserver
 from rockit_core.agents.orchestrator import DeterministicOrchestrator
 
 logger = logging.getLogger(__name__)
 
 
 class AgentPipeline:
-    """Chains gate → observers → [debate] → orchestrator into a single evaluate_signal() call."""
+    """Chains gate → observers → conflict detection → [debate] → orchestrator.
+
+    Accepts both legacy observers (AgentBase) and new DomainExpert instances.
+    Default: legacy 2-observer pipeline (ProfileObserver + MomentumObserver).
+    Use preset="experts" for the full 8 domain experts + ConflictDetector.
+    """
+
+    PRESET_LEGACY = "legacy"
+    PRESET_EXPERTS = "experts"
 
     def __init__(
         self,
@@ -29,9 +39,26 @@ class AgentPipeline:
         orchestrator: DeterministicOrchestrator | None = None,
         llm_client: OllamaClient | None = None,
         enable_debate: bool = False,
+        conflict_detector=None,
+        preset: str | None = None,
     ):
         self.gate = gate or CRIGateAgent()
-        self.observers = observers or [ProfileObserver(), MomentumObserver()]
+        if observers is not None:
+            self.observers = observers
+        elif preset == self.PRESET_EXPERTS:
+            self.observers = self._build_expert_observers()
+        else:
+            # Legacy default — matches original 2-observer pipeline
+            from rockit_core.agents.observers.profile import ProfileObserver
+            self.observers = [ProfileObserver(), MomentumObserver()]
+        # ConflictDetector: only enabled for expert preset (or explicit)
+        if conflict_detector is not None:
+            self.conflict_detector = conflict_detector
+        elif preset == self.PRESET_EXPERTS:
+            from rockit_core.agents.experts.conflict import ConflictDetector
+            self.conflict_detector = ConflictDetector()
+        else:
+            self.conflict_detector = None
         self.orchestrator = orchestrator or DeterministicOrchestrator()
         self.llm_client = llm_client
         self.enable_debate = enable_debate and llm_client is not None
@@ -49,6 +76,30 @@ class AgentPipeline:
 
         self._advocate = AdvocateAgent(self.llm_client)
         self._skeptic = SkepticAgent(self.llm_client)
+
+    @staticmethod
+    def _build_expert_observers() -> list:
+        """Build the full 8 domain experts + MomentumObserver list."""
+        from rockit_core.agents.experts.tpo import TpoExpert
+        from rockit_core.agents.experts.vwap import VwapExpert
+        from rockit_core.agents.experts.ema import EmaExpert
+        from rockit_core.agents.experts.ict import IctExpert
+        from rockit_core.agents.experts.scalper import ScalperExpert
+        from rockit_core.agents.experts.order_flow import OrderFlowExpert
+        from rockit_core.agents.experts.divergence import DivergenceExpert
+        from rockit_core.agents.experts.mean_reversion import MeanReversionExpert
+
+        return [
+            TpoExpert(),
+            MomentumObserver(),
+            VwapExpert(),
+            EmaExpert(),
+            IctExpert(),
+            ScalperExpert(),
+            OrderFlowExpert(),
+            DivergenceExpert(),
+            MeanReversionExpert(),
+        ]
 
     def evaluate_signal(
         self,
@@ -72,11 +123,21 @@ class AgentPipeline:
         gate_passed = self.gate.passes(context)
         all_cards = self.gate.evaluate(context)
 
-        # 2. Observers always run (CRI is soft evidence, not a gate)
+        # 2. Domain experts / observers produce evidence cards
         for obs in self.observers:
             all_cards.extend(obs.evaluate(context))
 
-        # 3. Debate (optional — between observers and orchestrator)
+        # 3. ConflictDetector: resolve opposing evidence between domains
+        if self.conflict_detector and len(all_cards) > 2:
+            try:
+                conflict_cards = self.conflict_detector.resolve_conflicts(
+                    all_cards, signal_dict=signal_dict
+                )
+                all_cards.extend(conflict_cards)
+            except Exception:  # noqa: BLE001
+                logger.debug("ConflictDetector failed, continuing without resolution", exc_info=True)
+
+        # 4. Debate (optional — between experts and orchestrator)
         if self.enable_debate and len(all_cards) > 1:
             try:
                 advocate_result, skeptic_result = self._run_debate(
@@ -93,7 +154,7 @@ class AgentPipeline:
             except Exception:  # noqa: BLE001
                 logger.warning("Debate failed, falling back to deterministic", exc_info=True)
 
-        # 4. Orchestrator decision (deterministic fallback)
+        # 5. Orchestrator decision (deterministic fallback)
         return self.orchestrator.decide(signal_dict, all_cards, gate_passed)
 
     def _run_debate(

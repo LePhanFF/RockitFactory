@@ -160,6 +160,40 @@ def calculate_cvd_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFra
     return df
 
 
+def compute_15m_trend_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute 15-min EMA20, EMA50, and ADX14 from 1-min bars.
+
+    Resamples all bars to 15-min globally (across sessions) so that
+    EMAs have enough history, then merges back to 1-min using the
+    most recent completed 15-min bar (no lookahead).
+
+    Produces: ema20_15m, ema50_15m, adx14_15m
+    """
+    df = df.copy()
+    ts_col = pd.to_datetime(df['timestamp'])
+    df_indexed = df.set_index(ts_col)
+
+    bars_15m = df_indexed.resample('15min').agg({
+        'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
+        'volume': 'sum',
+    }).dropna(subset=['close'])
+
+    bars_15m['ema20_15m'] = calculate_ema(bars_15m['close'], 20)
+    bars_15m['ema50_15m'] = calculate_ema(bars_15m['close'], 50)
+    bars_15m['adx14_15m'] = calculate_adx(bars_15m, 14)
+
+    # Merge back: each 1-min bar gets the 15-min indicator from its
+    # floored timestamp (the 15-min bar it belongs to).
+    df['_ts_floor_15m'] = ts_col.dt.floor('15min')
+    lookup = bars_15m[['ema20_15m', 'ema50_15m', 'adx14_15m']].copy()
+    lookup.index.name = '_ts_floor_15m'
+    df = df.merge(lookup, left_on='_ts_floor_15m', right_index=True, how='left')
+    df.drop(columns=['_ts_floor_15m'], inplace=True)
+
+    return df
+
+
 def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Add all technical indicators to dataframe."""
     df = df.copy()
@@ -184,5 +218,9 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # CVD divergence detection
     df = calculate_cvd_divergence(df)
+
+    # 15-min trend indicators (EMA20, EMA50, ADX14 on 15-min bars)
+    df = compute_15m_trend_indicators(df)
+    print("  15-min trend indicators computed (EMA20, EMA50, ADX14)")
 
     return df
