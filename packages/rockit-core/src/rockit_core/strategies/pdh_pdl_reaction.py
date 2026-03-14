@@ -57,7 +57,7 @@ POKE_MIN_PTS = 5.0                 # Min spike beyond level (Setup A)
 FAILED_AUCTION_BARS = 5            # Bars to close back (Setup A)
 TOUCH_PROXIMITY_PTS = 3.0          # How close = "touch" (Setup C)
 REJECTION_CLOSE_PCT = 0.30         # Close in bottom 30% = rejection (Setup C)
-TOUCH_STOP_PTS = 10.0              # Fixed stop for Setup C
+TOUCH_STOP_PTS = 25.0              # Fixed stop for Setup C (was 10pt, too tight for NQ noise)
 SPIKE_BUFFER_PTS = 5.0             # Buffer above spike high (Setup A)
 
 

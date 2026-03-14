@@ -627,9 +627,22 @@ class BacktestEngine:
                            'Super Trend Bull', 'Super Trend Bear',
                            'Morph to Trend')
 
-        # 80P is mean-reversion to VA — exempt from VWAP breach PM exit
-        # and trend trailing. Its stop/target handle exits.
-        mean_reversion_strategies = ('80P Rule',)
+        # Strategies exempt from VWAP breach PM exit.
+        # These target zones/levels that require price to move away from VWAP
+        # (gap fills, VA traversals, zone repairs). Their stop/target handle exits.
+        vwap_breach_exempt = (
+            '80P Rule',
+            'SP Gap Fill', 'Single Print Gap Fill',
+            'Poor HL Repair',
+            'CVD Divergence',
+            'RTH Gap Fill',
+            'Double Distribution',
+            'VA Edge Fade',
+            'IB Edge Fade',
+            'NDOG Gap Fill',
+            'NWOG Gap Fill',
+            'PDH/PDL Reaction',
+        )
 
         for pos in self.position_mgr.open_positions:
             pos.bars_held += 1
@@ -657,7 +670,7 @@ class BacktestEngine:
                 # Only apply to non-trend and non-mean-reversion strategies.
                 # Trend day entries with acceptance hold through PM; their stop handles exits.
                 # 80P mean-reversion trades target VA traverse, not VWAP alignment.
-                if pos.strategy_name not in trend_strategies and pos.strategy_name not in mean_reversion_strategies:
+                if pos.strategy_name not in trend_strategies and pos.strategy_name not in vwap_breach_exempt:
                     if 'vwap' in bar.index:
                         vwap = bar['vwap']
                         if pos.direction == 'LONG' and bar['close'] < vwap - VWAP_BREACH_POINTS:
