@@ -134,6 +134,12 @@ class VAEdgeFade(StrategyBase):
             if bar_time < ENTRY_START or bar_time >= ENTRY_CUTOFF:
                 return None
 
+        # Bias alignment filter — counter-bias (bullish + SHORT) is a net loser
+        # Data: aligned 46.7% WR PF 3.82, counter 20.5% WR PF 0.84
+        bias = session_context.get('session_bias') or session_context.get('regime_bias', '')
+        if bias and bias.upper() in ('BULL', 'BULLISH'):
+            return None
+
         price = bar['close']
         high = bar['high']
         low = bar['low']
