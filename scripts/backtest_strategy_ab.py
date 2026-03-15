@@ -28,6 +28,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root / "packages" / "rockit-core" / "src"))
 
 from rockit_core.agents.agent_filter import AgentFilter
+from rockit_core.agents.llm_client import OllamaClient
 from rockit_core.agents.pipeline import AgentPipeline
 from rockit_core.config.instruments import get_instrument
 from rockit_core.data.features import compute_all_features
@@ -84,7 +85,8 @@ def run_single_strategy(df, instrument, strategy_key, session_bias, trail_config
     # Add agent filter with LLM debate if requested
     if use_debate:
         try:
-            pipeline = AgentPipeline(enable_debate=True)
+            llm_client = OllamaClient()  # spark-ai:11434, qwen3.5:35b-a3b
+            pipeline = AgentPipeline(enable_debate=True, llm_client=llm_client)
             agent_filter = AgentFilter(pipeline=pipeline)
             filters = CompositeFilter([
                 BiasAlignmentFilter(),
