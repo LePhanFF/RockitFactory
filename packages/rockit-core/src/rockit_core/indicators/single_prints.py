@@ -170,7 +170,7 @@ def detect_single_print_zones(
     # Build output, filtering by min_zone_ticks
     result = []
     for low, high, periods in zones:
-        size_ticks = round((high - low) / tick_size)
+        size_ticks = round((high - low) / tick_size) + 1  # inclusive counting
         if size_ticks < min_zone_ticks:
             continue
 
@@ -274,7 +274,7 @@ def detect_price_gap_zones(
     # Build output, filtering by min_zone_ticks
     result = []
     for low, high in zones:
-        size_ticks = round((high - low) / tick_size)
+        size_ticks = round((high - low) / tick_size) + 1  # inclusive counting
         if size_ticks < min_zone_ticks:
             continue
 
