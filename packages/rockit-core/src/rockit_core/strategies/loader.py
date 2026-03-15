@@ -44,7 +44,7 @@ _CONFIG_KEY_TO_MODULE: dict[str, tuple[str, str]] = {
     "ndog_gap_fill": ("rockit_core.strategies.ndog_gap_fill", "NDOGGapFill"),
     "single_print_gap_fill": ("rockit_core.strategies.single_print_gap_fill", "SinglePrintGapFill"),
     "poor_highlow_repair": ("rockit_core.strategies.poor_highlow_repair", "PoorHighLowRepair"),
-    "cvd_divergence": ("rockit_core.strategies.cvd_divergence", "CVDDivergence"),
+    "cvd_divergence": ("rockit_core.strategies.cvd_divergence", "CVDDivergenceStrategy"),
     "rth_gap_fill": ("rockit_core.strategies.rth_gap_fill", "RTHGapFill"),
     "double_distribution": ("rockit_core.strategies.double_distribution", "DoubleDistributionStrategy"),
     "va_edge_fade": ("rockit_core.strategies.va_edge_fade", "VAEdgeFade"),
