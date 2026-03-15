@@ -8,7 +8,8 @@ Data flow:
   - merge_delta() appends new rows from the rolling export, deduplicates, saves back
 
 On first use (no CSV exists), the zip is extracted to create the initial CSV.
-After that, merge_delta() appends new NinjaTrader data and saves back to the CSV.
+After that, merge_delta() appends new NinjaTrader data, saves to CSV, and
+rebuilds the zip so the checked-in seed always reflects the latest data.
 The CSV is gitignored; only the zip is checked in.
 """
 
@@ -78,8 +79,22 @@ class SessionDataManager:
             with zf.open(csv_members[0]) as src, open(csv_path, "wb") as dst:
                 dst.write(src.read())
 
-        print(f"Extracted seed data: {zip_path.name} → {csv_path.name}")
+        print(f"Extracted seed data: {zip_path.name} -> {csv_path.name}")
         return csv_path
+
+    def _update_zip(self, instrument: str) -> None:
+        """Rebuild the seed zip from the current CSV so it stays current."""
+        csv_path = self.data_dir / self._csv_filename(instrument)
+        zip_path = self.data_dir / self._zip_filename(instrument)
+
+        if not csv_path.exists():
+            return
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(csv_path, self._csv_filename(instrument))
+
+        zip_mb = zip_path.stat().st_size / 1024 / 1024
+        print(f"Updated seed zip: {zip_path.name} ({zip_mb:.1f}MB)")
 
     def load(self, instrument: str = "NQ") -> pd.DataFrame:
         """
@@ -175,6 +190,9 @@ class SessionDataManager:
         out_path = self.data_dir / self._csv_filename(instrument)
         merged.to_csv(out_path, index=False)
         print(f"Saved: {out_path}")
+
+        # Rebuild the seed zip so it always has the latest accumulated data
+        self._update_zip(instrument)
 
         return merged
 

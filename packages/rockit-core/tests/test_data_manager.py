@@ -206,6 +206,32 @@ class TestSessionDataManagerMerge:
 
         assert len(merged) == 2
 
+    def test_merge_rebuilds_zip(self, tmp_path):
+        """Merge rebuilds the seed zip with latest accumulated data."""
+        data_dir = tmp_path / "data"
+        delta_dir = tmp_path / "delta"
+
+        _write_csv(
+            data_dir / "NQ_Volumetric_1.csv",
+            _make_csv_content([_make_row("2025-03-01T10:00:00.000", session_date="2025-03-01")]),
+        )
+        _write_csv(
+            delta_dir / "NQ_Volumetric_1.csv",
+            _make_csv_content([_make_row("2025-03-02T10:00:00.000", session_date="2025-03-02")]),
+        )
+
+        mgr = SessionDataManager(data_dir=data_dir, delta_dir=delta_dir)
+        mgr.merge_delta("NQ")
+
+        # Zip should exist and contain the merged data
+        zip_path = data_dir / "NQ_Volumetric_1.zip"
+        assert zip_path.exists()
+
+        # Delete CSV, load from zip — should get both sessions
+        (data_dir / "NQ_Volumetric_1.csv").unlink()
+        df = mgr.load("NQ")
+        assert df["session_date"].nunique() == 2
+
     def test_merge_never_loses_sessions(self, tmp_path):
         """Merge must never reduce session count (safety guard)."""
         data_dir = tmp_path / "data"
