@@ -88,9 +88,9 @@ MODULE_EXPECTATIONS = [
     ("intraday.ib", ["ib_high", "ib_low", "ib_range", "current_close", "atr14"],
      10 * 60 + 30, "full IB data"),
 
-    # Volume profile: available from RTH open
-    ("intraday.volume_profile", ["current_session"], 9 * 60 + 35,
-     "volume profile"),
+    # Volume profile: available from RTH open (includes 5/10-day composites)
+    ("intraday.volume_profile", ["current_session", "previous_5_days", "previous_10_days"],
+     9 * 60 + 35, "volume profile"),
 
     # TPO profile: needs ~30 min of data
     ("intraday.tpo_profile", ["current_poc", "current_vah", "current_val", "tpo_shape"],
@@ -108,18 +108,32 @@ MODULE_EXPECTATIONS = [
     # Inference: needs core confluences
     ("inference", ["day_type", "bias"], 10 * 60 + 30, "inference engine"),
 
-    # CRI: needs intraday + premarket data
-    ("cri_readiness", ["terrain", "identity", "permission"],
-     10 * 60 + 30, "CRI readiness"),
+    # SMT detection: needs ES/YM data + RTH bars
+    ("intraday.smt_detection", ["active_divergences"], 9 * 60 + 35,
+     "SMT detection"),
 
-    # Globex VA: always available (uses prior session)
-    ("intraday.globex_va_analysis", [], 0, "globex VA analysis"),
+    # IB enhanced: width class + extension magnitude (post-IB)
+    ("intraday.ib", ["ib_atr_ratio", "ib_width_class", "extension_pts",
+                      "extension_direction", "extension_multiple"],
+     10 * 60 + 30, "IB width class + extension magnitude"),
 
-    # 20% rule: needs IB data
-    ("intraday.twenty_percent_rule", [], 10 * 60 + 30, "20% rule"),
+    # Market structure modules (registry-based)
+    ("market_structure.prior_va_analysis", [], 0, "prior VA analysis"),
+    ("market_structure.ib_extension", [], 10 * 60 + 30, "IB extension"),
+    ("market_structure.va_poke", [], 10 * 60 + 30, "VA poke analysis"),
 
-    # VA edge fade: needs prior session VA
-    ("intraday.va_edge_fade", [], 10 * 60 + 30, "VA edge fade"),
+    # Balance type skew + morph (post-IB)
+    ("market_structure.balance_type", ["skew", "skew_strength", "skew_factors",
+                                        "seam_level", "seam_description", "morph"],
+     10 * 60 + 30, "balance type skew + morph"),
+
+    # OR analysis: should have data after 09:55 (6 EOR bars)
+    ("market_structure.or_analysis", ["or_high", "or_low", "opening_drive", "or_behavior"],
+     9 * 60 + 55, "OR analysis (drive, acceptance/judas)"),
+
+    # Tape context: IB touches, open type (post-IB)
+    ("tape_context", ["ib_touch_counter", "session_open_type", "c_period"],
+     10 * 60 + 30, "tape reading context"),
 ]
 
 
@@ -132,7 +146,7 @@ def validate_line(snap, line_num):
     prefix = f"L{line_num} ({time_str})"
 
     # 1. Required top-level keys (always)
-    for key in ["session_date", "current_et_time", "premarket", "intraday", "core_confluences"]:
+    for key in ["session_date", "current_et_time", "premarket", "intraday", "core_confluences", "market_structure"]:
         if key not in snap:
             issues.append(("ERROR", f"{prefix}: missing top-level key '{key}'"))
 
@@ -144,8 +158,7 @@ def validate_line(snap, line_num):
 
     # 3. Module population — check for error stubs
     for mod in ["premarket", "intraday", "core_confluences", "inference",
-                "cri_readiness", "playbook_setup", "mean_reversion",
-                "or_reversal", "edge_fade"]:
+                "market_structure"]:
         val = snap.get(mod)
         if is_error_stub(val):
             issues.append(("ERROR", f"{prefix}: {mod} FAILED: {val.get('error', '?')[:80]}"))
@@ -194,7 +207,115 @@ def validate_line(snap, line_num):
             if ib_high <= ib_low:
                 issues.append(("ERROR", f"{prefix}: ib_high={ib_high} <= ib_low={ib_low}"))
 
+    # 7. Cross-validation: confidence=0 or suspiciously low
+    inference = snap.get("inference", {})
+    if is_post_ib and not is_error_stub(inference):
+        conf = inference.get("confidence", 0)
+        if conf == 0:
+            issues.append(("ERROR", f"{prefix}: inference.confidence=0"))
+        elif isinstance(conf, (int, float)) and conf < 20:
+            issues.append(("WARNING", f"{prefix}: inference.confidence={conf} (suspiciously low)"))
+
+    # 8. Cross-validation: day_type vs IB extension
+    if is_post_ib and not is_error_stub(inference):
+        ib = snap.get("intraday", {}).get("ib", {})
+        ib_high = ib.get("ib_high")
+        ib_low = ib.get("ib_low")
+        ib_range = ib.get("ib_range", 0)
+        current_close = ib.get("current_close")
+        day_type = inference.get("day_type", {})
+        dt_type = day_type.get("type", "") if isinstance(day_type, dict) else ""
+
+        if (isinstance(ib_high, (int, float)) and isinstance(ib_low, (int, float))
+                and isinstance(ib_range, (int, float)) and ib_range > 0
+                and isinstance(current_close, (int, float))):
+            ext = max(max(0, current_close - ib_high), max(0, ib_low - current_close))
+            ext_mult = ext / ib_range
+            if ext_mult >= 0.5 and dt_type in ["Balance", "Neutral Range"]:
+                issues.append(("ERROR",
+                    f"{prefix}: day_type='{dt_type}' but IB extension={ext_mult:.2f}x "
+                    f"— should be Trend or P-Day"))
+
+    # 9. OR persistence: OR data should never disappear once established (after 09:55)
+    if t_min >= 9 * 60 + 55:
+        or_data = snap.get("market_structure", {}).get("or_analysis", {})
+        note = or_data.get("note", "")
+        if "Insufficient" in str(note) and t_min > 10 * 60:
+            issues.append(("ERROR", f"{prefix}: OR analysis lost — '{note}' (should persist all day)"))
+
+    # 10. Volume profile current session: poc/vah/val should not be "not_available" after 09:45
+    if t_min >= 9 * 60 + 45:
+        vp = snap.get("intraday", {}).get("volume_profile", {})
+        cs = vp.get("current_session", {}) if isinstance(vp, dict) else {}
+        for field in ["poc", "vah", "val"]:
+            val = cs.get(field)
+            if val == "not_available" or val is None:
+                issues.append(("ERROR",
+                    f"{prefix}: volume_profile.current_session.{field}='{val}' (should have data)"))
+
+    # 11. IB note check: should not say "not established/complete" after 10:30
+    if is_post_ib:
+        ib_note = snap.get("intraday", {}).get("ib", {}).get("note", "")
+        if isinstance(ib_note, str):
+            note_lower = ib_note.lower()
+            if "not established" in note_lower or "not complete" in note_lower:
+                issues.append(("ERROR",
+                    f"{prefix}: IB note says '{ib_note[:60]}' but IB should be established"))
+
+    # 12. DPOC migration: current_dpoc should exist after 11:30
+    if t_min >= 11 * 60 + 30:
+        dpoc = snap.get("intraday", {}).get("dpoc_migration", {})
+        if isinstance(dpoc, dict) and not is_error_stub(dpoc):
+            cd = dpoc.get("current_dpoc")
+            mig_status = dpoc.get("migration_status", "")
+            if cd is None and mig_status not in ["insufficient_completed_slices", "pre_1030"]:
+                issues.append(("WARNING",
+                    f"{prefix}: dpoc_migration.current_dpoc=None (should have data)"))
+            if mig_status == "insufficient_completed_slices" and t_min >= 12 * 60:
+                issues.append(("WARNING",
+                    f"{prefix}: dpoc_migration still '{mig_status}' at late time"))
+
+    # 13. Null/None in critical fields (deep scan at key times)
+    if time_str in ["10:30", "11:00", "12:00", "14:00"]:
+        _null_scan_critical(snap, prefix, issues, is_post_ib)
+
     return issues
+
+
+def _null_scan_critical(snap, prefix, issues, is_post_ib):
+    """Deep scan for None/null in critical nested fields at key time slices."""
+    critical_paths = [
+        "intraday.ib.ib_high",
+        "intraday.ib.ib_low",
+        "intraday.ib.ib_range",
+        "intraday.ib.current_close",
+        "intraday.volume_profile.current_session.poc",
+        "intraday.volume_profile.current_session.vah",
+        "intraday.volume_profile.current_session.val",
+        "premarket.overnight_high",
+        "premarket.overnight_low",
+        "inference.bias",
+        "inference.trend_strength",
+    ]
+    if is_post_ib:
+        critical_paths.extend([
+            "inference.day_type",
+            "inference.confidence",
+            "core_confluences.ib_acceptance",
+            "core_confluences.price_location",
+        ])
+
+    for path in critical_paths:
+        parts = path.split(".")
+        val = snap
+        for p in parts:
+            if isinstance(val, dict):
+                val = val.get(p)
+            else:
+                val = None
+                break
+        if val is None:
+            issues.append(("WARNING", f"{prefix}: {path}=None"))
 
 
 def validate_file(filepath):

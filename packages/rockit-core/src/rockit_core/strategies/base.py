@@ -19,6 +19,7 @@ class StrategyBase(ABC):
 
     Lifecycle:
       1. on_session_start() -- called once after IB formation
+      1b. on_pre_ib_bar() -- called for each bar DURING IB (before on_bar starts)
       2. on_bar() -- called for each bar after IB, return Signal or None
       3. on_session_end() -- called at session close for cleanup
 
@@ -74,6 +75,30 @@ class StrategyBase(ABC):
 
         bar_index is 0-based from start of post-IB data.
         """
+
+    def on_pre_ib_bar(
+        self,
+        bar: pd.Series,
+        bar_index: int,
+        session_context: dict,
+    ) -> Optional[Signal]:
+        """
+        Called for each bar DURING IB formation (9:30-10:29), before on_bar() starts.
+
+        Override this method for strategies that need to enter before IB close
+        (e.g., gap fill strategies that enter at/near RTH open).
+
+        The bar Series contains: open, high, low, close, volume, etc.
+        bar_index is 0-based from start of IB data.
+
+        session_context is a partial context (IB is still forming):
+          - ib_high, ib_low, ib_range are NOT yet final
+          - prior_close, prior_vwap, session_bias, regime_bias are available
+          - session_date, ib_bars (accumulated so far) are available
+
+        Default: returns None (no signal). Existing strategies are unaffected.
+        """
+        return None
 
     def on_session_end(self, session_date) -> None:
         """Optional cleanup at session end. Override if needed."""

@@ -28,12 +28,18 @@ emits on first post-IB on_bar() call.
 """
 
 from datetime import time as _time
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, TYPE_CHECKING
 import pandas as pd
 import numpy as np
 
+from rockit_core.models.signals import Direction, EntrySignal
+from rockit_core.models.stop_models import ATRStopModel
+from rockit_core.models.target_models import RMultipleTarget
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
+
+if TYPE_CHECKING:
+    from rockit_core.models.base import StopModel, TargetModel
 
 # Constants
 OR_BARS = 15                      # First 15 bars = Opening Range (9:30-9:44)
@@ -52,8 +58,15 @@ def _find_closest_swept_level(
     candidates: List[Tuple[str, float]],
     sweep_threshold: float,
     eor_range: float,
+    direction: str = "high",
 ) -> Tuple[Optional[float], Optional[str]]:
-    """Find the closest swept level from candidates within threshold."""
+    """
+    Find the closest swept level from candidates that was actually breached.
+
+    A sweep requires price to EXCEED the level (Judas swing / liquidity grab):
+      - High sweep: eor_high >= level (price breached above)
+      - Low sweep: eor_low <= level (price breached below)
+    """
     best_level = None
     best_name = None
     best_dist = float('inf')
@@ -62,7 +75,7 @@ def _find_closest_swept_level(
         if lvl is None:
             continue
         dist = abs(eor_extreme - lvl)
-        if dist < sweep_threshold and dist <= eor_range and dist < best_dist:
+        if dist < sweep_threshold and dist < best_dist:
             best_dist = dist
             best_level = lvl
             best_name = name
@@ -86,7 +99,18 @@ class OpeningRangeReversal(StrategyBase):
     Opening Range Reversal: fade the Judas Swing at the open.
 
     Scans the IB bars for OR reversal setups during on_session_start().
+
+    Constructor accepts optional stop_model and target_model for pluggable
+    execution. Defaults to ATRStopModel(2.0) and RMultipleTarget(2.0).
     """
+
+    def __init__(
+        self,
+        stop_model: Optional['StopModel'] = None,
+        target_model: Optional['TargetModel'] = None,
+    ):
+        self._stop_model = stop_model or ATRStopModel(ATR_STOP_MULT)
+        self._target_model = target_model or RMultipleTarget(2.0)
 
     @property
     def name(self) -> str:
@@ -169,11 +193,11 @@ class OpeningRangeReversal(StrategyBase):
         if london_low:
             low_candidates.append(('LDN_LOW', london_low))
 
-        # Proximity-based sweep: pick CLOSEST level within threshold
+        # Sweep detection: pick CLOSEST level actually breached
         swept_high_level, swept_high_name = _find_closest_swept_level(
-            eor_high, high_candidates, sweep_threshold, eor_range)
+            eor_high, high_candidates, sweep_threshold, eor_range, direction="high")
         swept_low_level, swept_low_name = _find_closest_swept_level(
-            eor_low, low_candidates, sweep_threshold, eor_range)
+            eor_low, low_candidates, sweep_threshold, eor_range, direction="low")
 
         if swept_high_level is None and swept_low_level is None:
             return
@@ -244,20 +268,29 @@ class OpeningRangeReversal(StrategyBase):
                 if delta >= 0 and not cvd_declining:
                     continue
 
-                # Stop: 2 ATR above entry
-                stop = price + ATR_STOP_MULT * atr14
-                risk = stop - price
+                # Use pluggable models for stop/target
+                entry_signal = EntrySignal(
+                    model_name=self.name,
+                    direction=Direction.SHORT,
+                    price=price,
+                    confidence=0.8,
+                    setup_type='OR_REVERSAL_SHORT',
+                )
+                ctx = dict(session_context)
+                ctx['atr14'] = atr14
+                stop_level = self._stop_model.compute(entry_signal, bar, ctx)
+                risk = stop_level.distance_points
                 if risk < eor_range * MIN_RISK_RATIO or risk > max_risk:
                     continue
-                target = price - 2 * risk
+                target_spec = self._target_model.compute(entry_signal, stop_level, bar, ctx)
 
                 bar_ts = bar.get('timestamp', bar.name) if hasattr(bar, 'name') else bar.get('timestamp')
                 self._cached_signal = Signal(
                     timestamp=bar_ts,
                     direction='SHORT',
                     entry_price=price,
-                    stop_price=stop,
-                    target_price=target,
+                    stop_price=stop_level.price,
+                    target_price=target_spec.price,
                     strategy_name=self.name,
                     setup_type='OR_REVERSAL_SHORT',
                     day_type='neutral',
@@ -271,6 +304,8 @@ class OpeningRangeReversal(StrategyBase):
                         'atr14': atr14,
                         'opening_drive': opening_drive,
                         'cvd_declining': cvd_declining,
+                        'stop_model': self._stop_model.name,
+                        'target_model': self._target_model.name,
                     },
                 )
                 return
@@ -318,20 +353,29 @@ class OpeningRangeReversal(StrategyBase):
                 if delta <= 0 and not cvd_rising:
                     continue
 
-                # Stop: 2 ATR below entry
-                stop = price - ATR_STOP_MULT * atr14
-                risk = price - stop
+                # Use pluggable models for stop/target
+                entry_signal = EntrySignal(
+                    model_name=self.name,
+                    direction=Direction.LONG,
+                    price=price,
+                    confidence=0.8,
+                    setup_type='OR_REVERSAL_LONG',
+                )
+                ctx = dict(session_context)
+                ctx['atr14'] = atr14
+                stop_level = self._stop_model.compute(entry_signal, bar, ctx)
+                risk = stop_level.distance_points
                 if risk < eor_range * MIN_RISK_RATIO or risk > max_risk:
                     continue
-                target = price + 2 * risk
+                target_spec = self._target_model.compute(entry_signal, stop_level, bar, ctx)
 
                 bar_ts = bar.get('timestamp', bar.name) if hasattr(bar, 'name') else bar.get('timestamp')
                 self._cached_signal = Signal(
                     timestamp=bar_ts,
                     direction='LONG',
                     entry_price=price,
-                    stop_price=stop,
-                    target_price=target,
+                    stop_price=stop_level.price,
+                    target_price=target_spec.price,
                     strategy_name=self.name,
                     setup_type='OR_REVERSAL_LONG',
                     day_type='neutral',
@@ -345,6 +389,8 @@ class OpeningRangeReversal(StrategyBase):
                         'atr14': atr14,
                         'opening_drive': opening_drive,
                         'cvd_rising': cvd_rising,
+                        'stop_model': self._stop_model.name,
+                        'target_model': self._target_model.name,
                     },
                 )
                 return

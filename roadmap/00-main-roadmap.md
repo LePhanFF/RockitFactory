@@ -43,8 +43,8 @@ Phase 6 (Retire Old Repos) ◄── All phases complete + 2 weeks parallel oper
 | 1b | Full Core Library | Migrate remaining strategies, all deterministic modules, entry/stop/target model registry | [02b-core-library.md](02b-core-library.md) | Not started |
 | 2 | Data Ingestion | Replace Google Drive sync with GCS direct upload | [03-data-ingestion.md](03-data-ingestion.md) | Not started |
 | 3 | Signals API | Build `rockit-serve` with annotation + trade setup endpoints | [04-signals-api.md](04-signals-api.md) | Not started |
-| 4 | Training Pipeline | Automated LoRA training with evaluation gates | [05-training-pipeline.md](05-training-pipeline.md) | Not started |
-| 5a | Agent System | LangGraph agents, debate protocol, reflection loop | [06-agent-system.md](06-agent-system.md) | Not started |
+| 4 | Training Pipeline | LLM tape reader: V2 schema, 20K+ pairs, Qwen3.5 LoRA | [05-training-pipeline.md](05-training-pipeline.md) | **In progress** — V1 schema + 164 pairs + scripts done |
+| 5a | Agent System | Tape reader + Advocate/Skeptic/Orchestrator + DuckDB | [06-agent-system.md](06-agent-system.md) | **Designing** — brainstorm/07 whiteboard (2100+ lines) |
 | 5b | Dashboard | Agent monitor, signals view, performance charts | [07-dashboard.md](07-dashboard.md) | Not started |
 | 5c | Platform Clients | NinjaTrader thin client, TradingView indicator | [08-platform-clients.md](08-platform-clients.md) | Not started |
 | 6 | Retire Old Repos | Archive originals, RockitFactory becomes single source | [09-retire-repos.md](09-retire-repos.md) | Not started |

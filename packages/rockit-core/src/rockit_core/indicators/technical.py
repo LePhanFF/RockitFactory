@@ -88,6 +88,112 @@ def calculate_vwap(df: pd.DataFrame) -> pd.Series:
     return (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
 
 
+def calculate_vwap_sigma_bands(df: pd.DataFrame, periods: list = None) -> pd.DataFrame:
+    """
+    Calculate VWAP standard deviation bands (1σ, 2σ, 3σ).
+
+    Uses rolling standard deviation of (price - VWAP) to create bands.
+    Must be called AFTER VWAP is computed. Resets per session.
+    """
+    if periods is None:
+        periods = [1, 2, 3]
+
+    df = df.copy()
+
+    for session_date, group in df.groupby('session_date'):
+        idx = group.index
+        vwap = df.loc[idx, 'vwap']
+        close = df.loc[idx, 'close']
+        deviation = close - vwap
+
+        # Expanding std for session-level VWAP bands (more stable than rolling)
+        expanding_std = deviation.expanding(min_periods=5).std()
+
+        for n in periods:
+            df.loc[idx, f'vwap_sigma_upper_{n}'] = vwap + (expanding_std * n)
+            df.loc[idx, f'vwap_sigma_lower_{n}'] = vwap - (expanding_std * n)
+
+    return df
+
+
+def calculate_cvd_divergence(df: pd.DataFrame, lookback: int = 20) -> pd.DataFrame:
+    """
+    Detect price-CVD divergence (bullish and bearish).
+
+    Bullish: price makes lower low but CVD makes higher low (buying at lower prices).
+    Bearish: price makes higher high but CVD makes lower high (selling at higher prices).
+    """
+    df = df.copy()
+    df['cvd_div_bull'] = False
+    df['cvd_div_bear'] = False
+
+    close = df['close'].values
+    cvd = df['cumulative_delta'].values if 'cumulative_delta' in df.columns else None
+    if cvd is None:
+        return df
+
+    for i in range(lookback, len(df)):
+        window_close = close[i - lookback:i + 1]
+        window_cvd = cvd[i - lookback:i + 1]
+
+        # Find recent swing lows (for bullish divergence)
+        # Current close is near window low, but CVD is higher than at previous low
+        curr_close = close[i]
+        curr_cvd = cvd[i]
+        min_close_idx = np.argmin(window_close[:-1])  # Previous low (excluding current)
+        min_close_val = window_close[min_close_idx]
+        cvd_at_prev_low = window_cvd[min_close_idx]
+
+        # Bullish: price at/below prior low, CVD above prior CVD at that low
+        if curr_close <= min_close_val * 1.001 and curr_cvd > cvd_at_prev_low:
+            df.iloc[i, df.columns.get_loc('cvd_div_bull')] = True
+
+        # Find recent swing highs (for bearish divergence)
+        max_close_idx = np.argmax(window_close[:-1])
+        max_close_val = window_close[max_close_idx]
+        cvd_at_prev_high = window_cvd[max_close_idx]
+
+        # Bearish: price at/above prior high, CVD below prior CVD at that high
+        if curr_close >= max_close_val * 0.999 and curr_cvd < cvd_at_prev_high:
+            df.iloc[i, df.columns.get_loc('cvd_div_bear')] = True
+
+    return df
+
+
+def compute_15m_trend_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute 15-min EMA20, EMA50, and ADX14 from 1-min bars.
+
+    Resamples all bars to 15-min globally (across sessions) so that
+    EMAs have enough history, then merges back to 1-min using the
+    most recent completed 15-min bar (no lookahead).
+
+    Produces: ema20_15m, ema50_15m, adx14_15m
+    """
+    df = df.copy()
+    ts_col = pd.to_datetime(df['timestamp'])
+    df_indexed = df.set_index(ts_col)
+
+    bars_15m = df_indexed.resample('15min').agg({
+        'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
+        'volume': 'sum',
+    }).dropna(subset=['close'])
+
+    bars_15m['ema20_15m'] = calculate_ema(bars_15m['close'], 20)
+    bars_15m['ema50_15m'] = calculate_ema(bars_15m['close'], 50)
+    bars_15m['adx14_15m'] = calculate_adx(bars_15m, 14)
+
+    # Merge back: each 1-min bar gets the 15-min indicator from its
+    # floored timestamp (the 15-min bar it belongs to).
+    df['_ts_floor_15m'] = ts_col.dt.floor('15min')
+    lookup = bars_15m[['ema20_15m', 'ema50_15m', 'adx14_15m']].copy()
+    lookup.index.name = '_ts_floor_15m'
+    df = df.merge(lookup, left_on='_ts_floor_15m', right_index=True, how='left')
+    df.drop(columns=['_ts_floor_15m'], inplace=True)
+
+    return df
+
+
 def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Add all technical indicators to dataframe."""
     df = df.copy()
@@ -98,6 +204,7 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['ema20'] = calculate_ema(df['close'], 20)
     df['ema50'] = calculate_ema(df['close'], 50)
     df['atr14'] = calculate_atr(df, 14)
+    df['atr_15'] = calculate_atr(df, 15)  # for ATR-based trailing stops
     df['adx14'] = calculate_adx(df, 14)
 
     # Mean reversion indicators
@@ -106,5 +213,15 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # Volume/price
     df['vwap'] = calculate_vwap(df)
+
+    # VWAP sigma bands (1σ, 2σ, 3σ)
+    df = calculate_vwap_sigma_bands(df)
+
+    # CVD divergence detection
+    df = calculate_cvd_divergence(df)
+
+    # 15-min trend indicators (EMA20, EMA50, ADX14 on 15-min bars)
+    df = compute_15m_trend_indicators(df)
+    print("  15-min trend indicators computed (EMA20, EMA50, ADX14)")
 
     return df

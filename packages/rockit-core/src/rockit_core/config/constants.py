@@ -55,9 +55,9 @@ TREND_STOP_IB_BUFFER = 0.3     # Stop = IB edge + 30% of IB range (wider for tre
 EMA_PULLBACK_THRESHOLD = 0.15  # Within 15% of IB range from EMA
 
 # ── B-Day Strategy ──────────────────────────────────────────────
-BDAY_COOLDOWN_BARS = 30
+BDAY_ACCEPTANCE_BARS = 30       # 30 bars (30 min at 1-min) to confirm acceptance
+BDAY_TOUCH_TOLERANCE = 5       # Touch within 5 pts of IBL
 BDAY_STOP_IB_BUFFER = 0.1      # Stop 10% beyond IB edge
-BDAY_POOR_STRUCTURE_LOOKBACK = 10
 
 # ── Morph Strategy ──────────────────────────────────────────────
 PM_MORPH_BREAKOUT_POINTS = 15   # Min points beyond AM range for PM morph

@@ -151,6 +151,8 @@ def get_dpoc_migration(df_nq, current_time_str="11:45", atr14_current=None, curr
 
     return {
         "dpoc_history": dpoc_history,
+        "current_dpoc": float(current_dpoc),
+        "migration_direction": direction,
         "direction": direction,
         "net_migration_pts": float(net_migration),
         "avg_velocity_per_30min": float(avg_velocity),

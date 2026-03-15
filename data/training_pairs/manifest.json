@@ -1,0 +1,50 @@
+{
+  "created_at": "2026-03-03T23:04:41.791303",
+  "model": "claude-sonnet-4-20250514",
+  "chunks": {
+    "chunk_2026-02-26.jsonl": {
+      "date": "2026-02-26",
+      "snapshot_count": 74,
+      "total_day_snapshots": 78,
+      "existing_pairs": 4,
+      "status": "pending",
+      "completed_count": 0,
+      "cost_usd": 0.0
+    },
+    "chunk_2026-02-27.jsonl": {
+      "date": "2026-02-27",
+      "snapshot_count": 74,
+      "total_day_snapshots": 78,
+      "existing_pairs": 4,
+      "status": "pending",
+      "completed_count": 0,
+      "cost_usd": 0.0
+    },
+    "chunk_2026-03-02.jsonl": {
+      "date": "2026-03-02",
+      "snapshot_count": 74,
+      "total_day_snapshots": 78,
+      "existing_pairs": 4,
+      "status": "pending",
+      "completed_count": 0,
+      "cost_usd": 0.0
+    },
+    "chunk_2026-03-03.jsonl": {
+      "date": "2026-03-03",
+      "snapshot_count": 74,
+      "total_day_snapshots": 78,
+      "existing_pairs": 4,
+      "status": "pending",
+      "completed_count": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "stats": {
+    "total_chunks": 4,
+    "completed_chunks": 0,
+    "pending_chunks": 4,
+    "total_snapshots": 296,
+    "completed_snapshots": 0,
+    "total_cost_usd": 0.0
+  }
+}

@@ -39,6 +39,17 @@ _CONFIG_KEY_TO_MODULE: dict[str, tuple[str, str]] = {
     "or_reversal": ("rockit_core.strategies.or_reversal", "OpeningRangeReversal"),
     "or_acceptance": ("rockit_core.strategies.or_acceptance", "ORAcceptanceStrategy"),
     "twenty_percent_rule": ("rockit_core.strategies.twenty_percent_rule", "TwentyPercentRule"),
+    "nwog_gap_fill": ("rockit_core.strategies.nwog_gap_fill", "NWOGGapFill"),
+    "pdh_pdl_reaction": ("rockit_core.strategies.pdh_pdl_reaction", "PDHPDLReaction"),
+    "ndog_gap_fill": ("rockit_core.strategies.ndog_gap_fill", "NDOGGapFill"),
+    "single_print_gap_fill": ("rockit_core.strategies.single_print_gap_fill", "SinglePrintGapFill"),
+    "poor_highlow_repair": ("rockit_core.strategies.poor_highlow_repair", "PoorHighLowRepair"),
+    "cvd_divergence": ("rockit_core.strategies.cvd_divergence", "CVDDivergence"),
+    "rth_gap_fill": ("rockit_core.strategies.rth_gap_fill", "RTHGapFill"),
+    "double_distribution": ("rockit_core.strategies.double_distribution", "DoubleDistributionStrategy"),
+    "va_edge_fade": ("rockit_core.strategies.va_edge_fade", "VAEdgeFade"),
+    "ib_edge_fade": ("rockit_core.strategies.ib_edge_fade", "IBEdgeFade"),
+    "ib_retracement": ("rockit_core.strategies.ib_retracement", "IBRetracement"),
 }
 
 
@@ -80,6 +91,10 @@ CORE_STRATEGIES = [
 RESEARCH_STRATEGIES = [
     "neutral_day", "pm_morph", "morph_to_trend",
     "orb_vwap_breakout", "ema_trend_follow", "liquidity_sweep",
+    "nwog_gap_fill", "pdh_pdl_reaction",
+    "ndog_gap_fill", "single_print_gap_fill", "poor_highlow_repair",
+    "cvd_divergence", "rth_gap_fill", "double_distribution",
+    "va_edge_fade", "ib_edge_fade", "ib_retracement",
 ]
 
 
@@ -111,3 +126,39 @@ def load_strategies_from_config(config_path: str | Path) -> list[StrategyBase]:
                 strategies.append(cls())
 
     return strategies
+
+
+def load_trail_configs(config_path: str | Path) -> dict[str, dict]:
+    """Load per-strategy trailing stop configs from strategies.yaml.
+
+    Returns:
+        Dict mapping strategy display name -> trail config dict.
+        Only includes strategies with trail.enabled = true.
+    """
+    _ensure_registry()
+
+    config_path = Path(config_path)
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    trail_configs = {}
+
+    for section in ['core_strategies', 'research_strategies']:
+        section_config = config.get(section, {})
+        for name, settings in section_config.items():
+            if not settings.get('enabled', False):
+                continue
+            trail = settings.get('trail')
+            if not trail or not trail.get('enabled', False):
+                continue
+            cls = _STRATEGY_REGISTRY.get(name)
+            if cls is None:
+                continue
+            strat_name = cls().name
+            trail_configs[strat_name] = {
+                'atr_period': trail.get('atr_period', 15),
+                'activate_mult': trail.get('activate_mult', 1.5),
+                'trail_mult': trail.get('trail_mult', 0.5),
+            }
+
+    return trail_configs

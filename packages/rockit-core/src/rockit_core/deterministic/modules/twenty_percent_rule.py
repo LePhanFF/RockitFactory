@@ -1,61 +1,47 @@
 #!/usr/bin/env python3
 """
-20P Rule — IB Extension Breakout Detection
+IB Extension Analysis — Consecutive close tracking beyond IB boundaries.
 
-After IB completes (09:30-10:30), price extends beyond IB boundary with
-3 consecutive 5-min closes. High-conviction trend continuation setup.
+Market structure module: Tracks consecutive closes beyond IB high/low
+to detect IB extension behavior. Pure observation — no trade signals.
 
-Key research findings (Feb 2026, 259 sessions backtest):
-- Best config: 3x 5-min closes + 2x ATR stop + 2R target → $496/mo, PF 1.78, 45.5% WR
-- 3x5min beats 2x5min (45.5% WR vs 37.3%) — extra bar = higher conviction
-- Stop: 2x ATR(14) at entry (32pt avg) — NOT IB boundary (219pt = chaos)
-- Target: 2R from entry (64pt avg target)
-- Entry cutoff: hard 13:00 ET (after = WR drops to ~32%)
+Detection logic:
+- IB completes at 10:30, then tracks 5-min closes beyond IB boundary
+- Counts consecutive closes above IBH and below IBL
+- Reports extension direction and 20P trigger status
 - IB range filter: skip if IB < 20 pts (too narrow)
-- LONG slightly outperforms SHORT (structural NQ bull bias)
 """
 
 import pandas as pd
 from typing import Dict, Optional
 
 
-def get_twenty_percent_rule(
+def get_ib_extension_analysis(
     df_current: pd.DataFrame,
     current_time_str: str = "11:45",
     atr14: float = None,
     ib_high: float = None,
     ib_low: float = None,
     ib_range: float = None,
+    volume_profile: dict = None,
+    tpo_profile: dict = None,
     **kwargs
 ) -> Dict:
     """
-    Detect 20P IB extension breakout setup.
+    Analyze IB extension behavior — consecutive closes beyond IB boundaries.
+
+    Market structure module: Pure observation — no trade signals.
 
     Args:
         df_current: Current session 5-min bars
         current_time_str: Current time (HH:MM)
-        atr14: ATR(14) value from ib_location module
+        atr14: ATR(14) value from ib_location module (unused, kept for API compat)
         ib_high: IB high from ib_location module
         ib_low: IB low from ib_location module
         ib_range: IB range from ib_location module
 
     Returns:
-        {
-            "ib_range_pts": IB range in points,
-            "ib_filter_pass": bool (IB >= 20 pts),
-            "ib_complete": bool (past 10:30),
-            "extension_direction": "long" | "short" | "none",
-            "consecutive_closes_above": int,
-            "consecutive_closes_below": int,
-            "20p_triggered": bool,
-            "20p_direction": "long" | "short" | "none",
-            "entry_price": float (at close of 3rd bar),
-            "stop_price": float (entry ± 2x ATR),
-            "risk_pts": float,
-            "target_2r": float,
-            "confidence": int 0-100,
-            ...
-        }
+        IB completion status, extension tracking, 20P trigger status
     """
 
     current_time = pd.to_datetime(current_time_str).time()
@@ -152,37 +138,36 @@ def get_twenty_percent_rule(
         direction = "short"
 
     # =========================================================================
-    # STEP 7: Entry/Stop/Target (on trigger)
+    # STEP 7: Volume + TPO acceptance context (Dalton cross-reference)
     # =========================================================================
 
-    entry_price = None
-    stop_price = None
-    risk_pts = None
-    target_2r = None
-    target_3r = None
+    # Volume acceptance: check if current session POC has migrated beyond IB
+    volume_accepted = False
+    vol_poc_location = "inside_ib"
+    if volume_profile and isinstance(volume_profile, dict):
+        current_vp = volume_profile.get("current_session", {})
+        if isinstance(current_vp, dict):
+            current_poc = current_vp.get("poc")
+            if isinstance(current_poc, (int, float)):
+                if current_poc > ib_high:
+                    volume_accepted = True
+                    vol_poc_location = "above_ibh"
+                elif current_poc < ib_low:
+                    volume_accepted = True
+                    vol_poc_location = "below_ibl"
 
-    if triggered and trigger_bar_idx is not None:
-        entry_bar = five_min_bars.iloc[trigger_bar_idx]
-        entry_price = round(entry_bar["close"], 2)
-
-        # Stop: 2x ATR(14) from entry (research: 32pt avg, PF 1.78)
-        if atr14 and atr14 > 0:
-            stop_distance = round(2 * atr14, 2)
-        else:
-            # Fallback: 0.08 * IB range (research: ib_range * 0.08 ≈ ATR estimate)
-            stop_distance = round(2 * 0.08 * ib_range, 2)
-
-        if direction == "long":
-            stop_price = round(entry_price - stop_distance, 2)
-        else:
-            stop_price = round(entry_price + stop_distance, 2)
-
-        risk_pts = round(abs(entry_price - stop_price), 1)
-        target_2r = round(entry_price + (2 * risk_pts), 2) if direction == "long" else round(entry_price - (2 * risk_pts), 2)
-        target_3r = round(entry_price + (3 * risk_pts), 2) if direction == "long" else round(entry_price - (3 * risk_pts), 2)
-
-    # Confidence scoring
-    confidence = _compute_confidence(triggered, direction, consec_above, consec_below, past_cutoff)
+    # TPO acceptance: check if TPO POC has migrated beyond IB
+    tpo_accepted = False
+    tpo_poc_location = "inside_ib"
+    if tpo_profile and isinstance(tpo_profile, dict):
+        tpo_poc = tpo_profile.get("current_poc")
+        if isinstance(tpo_poc, (int, float)):
+            if tpo_poc > ib_high:
+                tpo_accepted = True
+                tpo_poc_location = "above_ibh"
+            elif tpo_poc < ib_low:
+                tpo_accepted = True
+                tpo_poc_location = "below_ibl"
 
     return {
         # IB state
@@ -196,21 +181,22 @@ def get_twenty_percent_rule(
         "consecutive_closes_below_ibl": consec_below,
         "extension_direction": "long" if consec_above > consec_below else ("short" if consec_below > consec_above else "none"),
 
-        # Setup status
+        # 20P trigger status
         "20p_triggered": triggered,
         "20p_direction": direction,
-        "past_entry_cutoff": past_cutoff,
 
-        # Trade parameters
-        "entry_price": entry_price,
-        "stop_price": stop_price,
-        "risk_pts": risk_pts,
-        "target_2r": target_2r,
-        "target_3r": target_3r,
+        # Volume + TPO acceptance context
+        "volume_accepted": volume_accepted,
+        "vol_poc_location": vol_poc_location,
+        "tpo_accepted": tpo_accepted,
+        "tpo_poc_location": tpo_poc_location,
 
-        "confidence": confidence,
-        "note": "20P: 3x5min consecutive closes beyond IB. Stop=2xATR (NOT IB boundary). 2R target. Long bias on NQ."
+        "note": f"IB extension: {consec_above} closes above IBH, {consec_below} closes below IBL, triggered={triggered}"
     }
+
+
+# Keep old name as alias for backward compatibility during transition
+get_twenty_percent_rule = get_ib_extension_analysis
 
 
 def _count_consecutive_extensions(five_min_bars, ib_high, ib_low):

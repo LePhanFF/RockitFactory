@@ -45,6 +45,12 @@ class Trade:
     # Exit
     exit_reason: str = ""       # 'STOP', 'TARGET', 'TIME', 'EOD', 'DAILY_LOSS', 'VWAP_BREACH_PM'
 
+    # MAE/MFE (Maximum Adverse/Favorable Excursion)
+    mae_price: float = 0.0     # Worst price during trade (LONG: lowest low, SHORT: highest high)
+    mfe_price: float = 0.0     # Best price during trade (LONG: highest high, SHORT: lowest low)
+    mae_bar: int = 0           # Bar number when MAE occurred
+    mfe_bar: int = 0           # Bar number when MFE occurred
+
     # Metadata
     metadata: dict = field(default_factory=dict)
 
@@ -79,3 +85,52 @@ class Trade:
         else:
             actual_points = self.entry_price - self.exit_price
         return actual_points / risk
+
+    @property
+    def mae_points(self) -> float:
+        """MAE distance from entry in points (always positive)."""
+        if self.direction == 'LONG':
+            return max(0.0, self.entry_price - self.mae_price)
+        else:
+            return max(0.0, self.mae_price - self.entry_price)
+
+    @property
+    def mfe_points(self) -> float:
+        """MFE distance from entry in points (always positive)."""
+        if self.direction == 'LONG':
+            return max(0.0, self.mfe_price - self.entry_price)
+        else:
+            return max(0.0, self.entry_price - self.mfe_price)
+
+    @property
+    def mae_pct_of_stop(self) -> float:
+        """MAE as percentage of stop distance. 0.8 = touched 80% of stop."""
+        risk = self.risk_points
+        return self.mae_points / risk if risk > 0 else 0.0
+
+    @property
+    def mfe_pct_of_target(self) -> float:
+        """MFE as percentage of target distance. 1.2 = went 20% past target."""
+        reward = self.reward_points
+        return self.mfe_points / reward if reward > 0 else 0.0
+
+    @property
+    def entry_efficiency(self) -> float:
+        """Entry quality: (MFE - MAE) / (MFE + MAE). 1.0 = perfect, 0.0 = terrible."""
+        total = self.mfe_points + self.mae_points
+        if total == 0:
+            return 0.0
+        return (self.mfe_points - self.mae_points) / total
+
+    @property
+    def heat(self) -> float:
+        """Heat: MAE / risk. >1.0 = price went past stop level without fill."""
+        risk = self.risk_points
+        return self.mae_points / risk if risk > 0 else 0.0
+
+    @property
+    def entry_hour(self) -> Optional[int]:
+        """Hour of entry for time-of-day analysis."""
+        if self.entry_time is not None and hasattr(self.entry_time, 'hour'):
+            return self.entry_time.hour
+        return None

@@ -34,6 +34,7 @@ class OpenPosition:
         trend_strength: str,
         session_date: str,
         pyramid_level: int = 0,
+        metadata: dict | None = None,
     ):
         self.direction = direction
         self.entry_price = entry_price
@@ -47,9 +48,33 @@ class OpenPosition:
         self.trend_strength = trend_strength
         self.session_date = session_date
         self.pyramid_level = pyramid_level
+        self.metadata = metadata or {}
         self.bars_held = 0
         self.trailing_stop = stop_price
         self.breakeven_activated = False
+
+        # MAE/MFE tracking (updated bar-by-bar)
+        self.mae_price = entry_price  # worst price (LONG: lowest low, SHORT: highest high)
+        self.mfe_price = entry_price  # best price (LONG: highest high, SHORT: lowest low)
+        self.mae_bar = 0              # bar number when MAE occurred
+        self.mfe_bar = 0              # bar number when MFE occurred
+
+    def update_excursions(self, bar_low: float, bar_high: float) -> None:
+        """Update MAE/MFE with current bar's price extremes."""
+        if self.direction == 'LONG':
+            if bar_low < self.mae_price:
+                self.mae_price = bar_low
+                self.mae_bar = self.bars_held
+            if bar_high > self.mfe_price:
+                self.mfe_price = bar_high
+                self.mfe_bar = self.bars_held
+        else:  # SHORT
+            if bar_high > self.mae_price:
+                self.mae_price = bar_high
+                self.mae_bar = self.bars_held
+            if bar_low < self.mfe_price:
+                self.mfe_price = bar_low
+                self.mfe_bar = self.bars_held
 
     def unrealized_pnl_points(self, current_price: float) -> float:
         """Current unrealized P&L in points."""
@@ -95,6 +120,31 @@ class OpenPosition:
             new_stop = session_low + trail_distance
             if new_stop < self.trailing_stop:
                 self.trailing_stop = new_stop
+
+    def trail_by_atr(self, bar_high: float, bar_low: float,
+                     activate_distance: float, trail_distance: float) -> None:
+        """ATR-based trailing stop — activates after a meaningful move, then trails.
+
+        Only ratchets the stop (never moves it away from price).
+
+        Args:
+            bar_high: Current bar high.
+            bar_low: Current bar low.
+            activate_distance: Minimum favorable excursion (pts) to activate trail.
+            trail_distance: Distance behind high-water mark (pts) for trail.
+        """
+        if self.direction == 'LONG':
+            hwm = bar_high - self.entry_price
+            if hwm >= activate_distance:
+                new_stop = self.entry_price + hwm - trail_distance
+                if new_stop > self.trailing_stop:
+                    self.trailing_stop = new_stop
+        else:
+            hwm = self.entry_price - bar_low
+            if hwm >= activate_distance:
+                new_stop = self.entry_price - hwm + trail_distance
+                if new_stop < self.trailing_stop:
+                    self.trailing_stop = new_stop
 
 
 class PositionManager:

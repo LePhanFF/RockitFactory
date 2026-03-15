@@ -1,0 +1,543 @@
+"""
+Core database operations for the Rockit research database.
+
+connect()                     — open/create DuckDB
+persist_backtest_run()        — insert run metadata
+persist_trades()              — insert trade dicts
+persist_backtest_from_result() — from live BacktestResult
+query() / query_df()          — raw SQL helpers
+table_counts()                — row counts for all tables
+"""
+
+import json
+import subprocess
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+
+import duckdb
+
+from rockit_core.research.schema import TABLES, create_all_tables
+
+# Default database path
+DEFAULT_DB_PATH = Path("data/research.duckdb")
+
+
+def _json_default(obj: Any) -> Any:
+    """Handle numpy/pandas types for json.dumps."""
+    import numpy as np
+
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    return str(obj)
+
+
+def connect(db_path: Optional[str] = None) -> duckdb.DuckDBPyConnection:
+    """Open (or create) the research database. Use ':memory:' for tests."""
+    if db_path is None:
+        db_path = str(DEFAULT_DB_PATH)
+    if db_path != ":memory:":
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(db_path)
+    create_all_tables(conn)
+    return conn
+
+
+def _git_info() -> Dict[str, Optional[str]]:
+    """Get current git branch and short commit hash."""
+    info: Dict[str, Optional[str]] = {"branch": None, "commit": None}
+    try:
+        info["branch"] = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        info["commit"] = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        pass
+    return info
+
+
+def persist_backtest_run(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    instrument: str,
+    summary: Dict[str, Any],
+    strategies: Sequence[str],
+    config: Optional[Dict] = None,
+    notes: Optional[str] = None,
+) -> str:
+    """Insert a backtest run record. Returns run_id."""
+    git = _git_info()
+    conn.execute(
+        """
+        INSERT INTO backtest_runs (
+            run_id, instrument, sessions, total_trades,
+            win_rate, profit_factor, net_pnl, max_drawdown,
+            avg_win, avg_loss, expectancy,
+            strategies, config, by_strategy,
+            git_branch, git_commit, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            run_id,
+            instrument,
+            summary.get("sessions", 0),
+            summary.get("trades", 0),
+            summary.get("win_rate", 0.0),
+            summary.get("profit_factor", 0.0),
+            summary.get("net_pnl", 0.0),
+            summary.get("max_drawdown", 0.0),
+            summary.get("avg_win", 0.0),
+            summary.get("avg_loss", 0.0),
+            summary.get("expectancy", 0.0),
+            json.dumps(list(strategies), default=_json_default),
+            json.dumps(config, default=_json_default) if config else None,
+            json.dumps(summary.get("by_strategy", {}), default=_json_default),
+            git.get("branch"),
+            git.get("commit"),
+            notes,
+        ],
+    )
+    return run_id
+
+
+def persist_trades(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    trades: List[Dict[str, Any]],
+    instrument: str = "NQ",
+) -> int:
+    """Insert trade dicts into the trades table. Returns count inserted."""
+    if not trades:
+        return 0
+
+    count = 0
+    for i, t in enumerate(trades):
+        trade_id = t.get("trade_id", f"{run_id}_t{i:04d}")
+
+        # Handle both key names: "strategy" (JSON) and "strategy_name" (Trade)
+        strategy_name = t.get("strategy_name") or t.get("strategy", "")
+        setup_type = t.get("setup_type") or t.get("setup", "")
+
+        # Normalize session_date — strip " 00:00:00" suffix for join compatibility
+        session_date = str(t.get("session_date", "")).split(" ")[0].split("T")[0]
+
+        # Parse entry_time / exit_time if strings
+        entry_time = _parse_timestamp(t.get("entry_time"))
+        exit_time = _parse_timestamp(t.get("exit_time"))
+
+        # Metadata as JSON (handle numpy types)
+        meta = t.get("metadata")
+        meta_json = json.dumps(meta, default=_json_default) if meta else None
+
+        conn.execute(
+            """
+            INSERT INTO trades (
+                trade_id, run_id, strategy_name, setup_type,
+                day_type, trend_strength, session_date,
+                entry_time, exit_time, bars_held,
+                direction, contracts,
+                signal_price, entry_price, exit_price,
+                stop_price, target_price,
+                gross_pnl, commission, slippage_cost, net_pnl,
+                exit_reason,
+                mae_price, mfe_price, mae_bar, mfe_bar,
+                instrument, metadata
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?, ?, ?, ?,
+                ?,
+                ?, ?, ?, ?,
+                ?, ?
+            )
+            """,
+            [
+                trade_id,
+                run_id,
+                strategy_name,
+                setup_type,
+                t.get("day_type", ""),
+                t.get("trend_strength", ""),
+                session_date,
+                entry_time,
+                exit_time,
+                t.get("bars_held", 0),
+                t.get("direction", ""),
+                t.get("contracts", 0),
+                t.get("signal_price", 0.0),
+                t.get("entry_price", 0.0),
+                t.get("exit_price", 0.0),
+                t.get("stop_price", 0.0),
+                t.get("target_price", 0.0),
+                t.get("gross_pnl", 0.0),
+                t.get("commission", 0.0),
+                t.get("slippage_cost", 0.0),
+                t.get("net_pnl", 0.0),
+                t.get("exit_reason", ""),
+                t.get("mae_price", 0.0),
+                t.get("mfe_price", 0.0),
+                t.get("mae_bar", 0),
+                t.get("mfe_bar", 0),
+                instrument,
+                meta_json,
+            ],
+        )
+        count += 1
+    return count
+
+
+def persist_backtest_from_result(
+    conn: duckdb.DuckDBPyConnection,
+    result: Any,  # BacktestResult
+    instrument: str,
+    summary: Dict[str, Any],
+    strategies: Sequence[str],
+    config: Optional[Dict] = None,
+    notes: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> str:
+    """Convert a live BacktestResult → dicts → persist run + trades.
+
+    Uses Trade objects directly so all fields (MAE/MFE, signal_price, etc.)
+    are preserved — the JSON serialization in save_results() omits many.
+    """
+    if run_id is None:
+        run_id = f"{instrument}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+    persist_backtest_run(conn, run_id, instrument, summary, strategies, config, notes)
+
+    trade_dicts = []
+    for t in result.trades:
+        td = {
+            "strategy_name": t.strategy_name,
+            "setup_type": t.setup_type,
+            "day_type": t.day_type,
+            "trend_strength": t.trend_strength,
+            "session_date": t.session_date,
+            "entry_time": t.entry_time,
+            "exit_time": t.exit_time,
+            "bars_held": t.bars_held,
+            "direction": t.direction,
+            "contracts": t.contracts,
+            "signal_price": t.signal_price,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "stop_price": t.stop_price,
+            "target_price": t.target_price,
+            "gross_pnl": t.gross_pnl,
+            "commission": t.commission,
+            "slippage_cost": t.slippage_cost,
+            "net_pnl": t.net_pnl,
+            "exit_reason": t.exit_reason,
+            "mae_price": t.mae_price,
+            "mfe_price": t.mfe_price,
+            "mae_bar": t.mae_bar,
+            "mfe_bar": t.mfe_bar,
+            "metadata": t.metadata,
+        }
+        trade_dicts.append(td)
+
+    persist_trades(conn, run_id, trade_dicts, instrument)
+    return run_id
+
+
+def persist_backtest_from_json(
+    conn: duckdb.DuckDBPyConnection,
+    json_path: str,
+) -> str:
+    """Load a saved backtest JSON file and persist it.
+
+    Returns run_id.
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    instrument = data.get("instrument", "NQ")
+    ts = data.get("timestamp", "unknown")
+    summary = data.get("summary", {})
+    trades = data.get("trades", [])
+
+    run_id = f"{instrument}_{ts}"
+
+    # Check if already loaded
+    existing = conn.execute(
+        "SELECT 1 FROM backtest_runs WHERE run_id = ?", [run_id]
+    ).fetchone()
+    if existing:
+        return run_id
+
+    strategies = list(summary.get("by_strategy", {}).keys())
+    persist_backtest_run(conn, run_id, instrument, summary, strategies)
+    persist_trades(conn, run_id, trades, instrument)
+    return run_id
+
+
+def query(
+    conn: duckdb.DuckDBPyConnection,
+    sql: str,
+    params: Optional[list] = None,
+) -> list:
+    """Execute SQL and return rows as list of tuples."""
+    if params:
+        return conn.execute(sql, params).fetchall()
+    return conn.execute(sql).fetchall()
+
+
+def query_df(
+    conn: duckdb.DuckDBPyConnection,
+    sql: str,
+    params: Optional[list] = None,
+):
+    """Execute SQL and return a pandas DataFrame."""
+    if params:
+        return conn.execute(sql, params).fetchdf()
+    return conn.execute(sql).fetchdf()
+
+
+def table_counts(conn: duckdb.DuckDBPyConnection) -> Dict[str, int]:
+    """Return row counts for all research tables."""
+    counts = {}
+    for name in TABLES:
+        try:
+            row = conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()
+            counts[name] = row[0] if row else 0
+        except Exception:
+            counts[name] = 0
+    return counts
+
+
+def persist_assessment(
+    conn: duckdb.DuckDBPyConnection,
+    trade_id: str,
+    run_id: str,
+    assessment: Dict[str, Any],
+) -> None:
+    """UPSERT a trade assessment. Deletes existing + re-inserts."""
+    conn.execute(
+        "DELETE FROM trade_assessments WHERE trade_id = ? AND run_id = ?",
+        [trade_id, run_id],
+    )
+    conn.execute(
+        """
+        INSERT INTO trade_assessments (
+            trade_id, run_id,
+            outcome_quality, why_worked, why_failed,
+            deterministic_support, deterministic_warning,
+            improvement_suggestion, pre_signal_context
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            trade_id,
+            run_id,
+            assessment.get("outcome_quality", ""),
+            assessment.get("why_worked"),
+            assessment.get("why_failed"),
+            assessment.get("deterministic_support"),
+            assessment.get("deterministic_warning"),
+            assessment.get("improvement_suggestion"),
+            json.dumps(assessment["pre_signal_context"], default=_json_default) if assessment.get("pre_signal_context") else None,
+        ],
+    )
+
+
+def persist_observation(
+    conn: duckdb.DuckDBPyConnection,
+    observation: Dict[str, Any],
+) -> None:
+    """Insert an observation record. Deletes existing + re-inserts on conflict."""
+    obs_id = observation.get("obs_id", str(uuid.uuid4())[:12])
+    conn.execute("DELETE FROM observations WHERE obs_id = ?", [obs_id])
+    conn.execute(
+        """
+        INSERT INTO observations (
+            obs_id, scope, strategy, session_date, trade_id, run_id,
+            observation, evidence, source, confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            obs_id,
+            observation.get("scope", "portfolio"),
+            observation.get("strategy"),
+            observation.get("session_date"),
+            observation.get("trade_id"),
+            observation.get("run_id"),
+            observation["observation"],
+            observation.get("evidence"),
+            observation.get("source", "phase4_analysis"),
+            observation.get("confidence", 0.0),
+        ],
+    )
+
+
+def persist_session_review(
+    conn: duckdb.DuckDBPyConnection,
+    review: Dict[str, Any],
+) -> str:
+    """Insert a session review record. Deletes existing + re-inserts on conflict.
+
+    Returns review_id.
+    """
+    review_id = review.get("review_id", f"rev_{uuid.uuid4().hex[:10]}")
+    conn.execute("DELETE FROM session_reviews WHERE review_id = ?", [review_id])
+    conn.execute(
+        """
+        INSERT INTO session_reviews (
+            review_id, session_date, instrument, reviewer,
+            user_notes, signals_fired, signals_filtered, trades_taken,
+            net_pnl, day_type, bias, ib_range, alignment_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            review_id,
+            review.get("session_date", ""),
+            review.get("instrument", "NQ"),
+            review.get("reviewer", "system"),
+            review.get("user_notes"),
+            review.get("signals_fired", 0),
+            review.get("signals_filtered", 0),
+            review.get("trades_taken", 0),
+            review.get("net_pnl", 0.0),
+            review.get("day_type"),
+            review.get("bias"),
+            review.get("ib_range"),
+            json.dumps(review["alignment"], default=_json_default)
+            if review.get("alignment")
+            else None,
+        ],
+    )
+    return review_id
+
+
+def persist_agent_decision(
+    conn: duckdb.DuckDBPyConnection,
+    decision_id: str,
+    run_id: str,
+    decision_data: Dict[str, Any],
+) -> None:
+    """Insert an agent decision record. Deletes existing + re-inserts."""
+    conn.execute(
+        "DELETE FROM agent_decisions WHERE decision_id = ?", [decision_id]
+    )
+    evidence_json = json.dumps(
+        decision_data.get("evidence_cards", []), default=_json_default
+    )
+    # Debate context (Advocate/Skeptic reasoning — may be absent for non-debate runs)
+    debate = decision_data.get("debate", {}) or {}
+    advocate = debate.get("advocate", {}) or {}
+    skeptic = debate.get("skeptic", {}) or {}
+    skeptic_warnings_json = json.dumps(
+        skeptic.get("warnings", []), default=_json_default
+    )
+    admitted_json = json.dumps(
+        debate.get("cards_admitted", []), default=_json_default
+    )
+    rejected_json = json.dumps(
+        debate.get("cards_rejected", []), default=_json_default
+    )
+    instinct_json = json.dumps(
+        debate.get("instinct_cards", []), default=_json_default
+    )
+    conn.execute(
+        """
+        INSERT INTO agent_decisions (
+            decision_id, run_id, trade_id, session_date, signal_time,
+            strategy_name, setup_type, signal_direction,
+            decision, confidence, evidence_direction,
+            bull_score, bear_score, conviction,
+            total_evidence, bull_cards, bear_cards,
+            gate_passed, gate_cri_status, reasoning,
+            evidence_cards,
+            advocate_thesis, advocate_direction, advocate_confidence,
+            skeptic_thesis, skeptic_direction, skeptic_confidence,
+            skeptic_warnings, debate_cards_admitted, debate_cards_rejected,
+            instinct_cards,
+            actual_outcome, actual_pnl, was_correct
+        ) VALUES (
+            ?, ?, ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?,
+            ?, ?, ?
+        )
+        """,
+        [
+            decision_id,
+            run_id,
+            decision_data.get("trade_id"),
+            decision_data.get("session_date"),
+            decision_data.get("signal_time"),
+            decision_data.get("strategy_name", ""),
+            decision_data.get("setup_type"),
+            decision_data.get("signal_direction"),
+            decision_data.get("decision", ""),
+            decision_data.get("confidence", 0.0),
+            decision_data.get("evidence_direction"),
+            decision_data.get("bull_score", 0.0),
+            decision_data.get("bear_score", 0.0),
+            decision_data.get("conviction", 0.0),
+            decision_data.get("total_evidence", 0),
+            decision_data.get("bull_cards", 0),
+            decision_data.get("bear_cards", 0),
+            decision_data.get("gate_passed", True),
+            decision_data.get("gate_cri_status"),
+            decision_data.get("reasoning"),
+            evidence_json,
+            advocate.get("thesis"),
+            advocate.get("direction"),
+            advocate.get("confidence"),
+            skeptic.get("thesis"),
+            skeptic.get("direction"),
+            skeptic.get("confidence"),
+            skeptic_warnings_json,
+            admitted_json,
+            rejected_json,
+            instinct_json,
+            decision_data.get("actual_outcome"),
+            decision_data.get("actual_pnl"),
+            decision_data.get("was_correct"),
+        ],
+    )
+
+
+def _parse_timestamp(val: Any) -> Any:
+    """Parse a timestamp value — pass through datetimes, parse strings."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                continue
+    return None

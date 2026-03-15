@@ -1,63 +1,36 @@
 """
-Strategy 3: Trend Day Bear (Standard Downtrend)
-Mirror of Trend Day Bull v3 with tight stops on pullback entries.
+Strategy: Trend Day Bear — EMA-aligned pullback entries (SHORT)
 
-Dalton Playbook Rules:
-  - Acceptance below IBL, DPOC migrates down steadily
-  - Elongated lower distribution, poor high early
-  - TPO Structural Signpost: Excess (Tail) >=3 TPOs at day high
+Re-optimized from quant study (2026-03-13, 274 NQ sessions):
+  - 15-min EMA20 < EMA50 alignment filter (bear trend confirmation)
+  - ADX(14) on 15-min >= 25 (strong trend gate)
+  - Entry: VWAP rejection or bear continuation after acceptance below IBL
+  - Delta confirmation required (sellers present, delta < 0)
+  - Fixed 40pt stop / 100pt target (2.5:1 R:R)
+  - No day_type gate — alignment + acceptance IS the filter
 
-Acceptance Gate:
-  - 3x5-min closes below IBL (ACCEPTANCE_MIN_BARS_BEAR = 3)
-  - Bear breakdowns bounce more frequently — stricter acceptance
+Study results (ADX>=25 + delta confirmation):
+  69 trades total (bull+bear), 46.4% WR, PF 1.79
+  SHORT component: ~34 trades, ~42% WR
 
-Entry Model v3 — Pullback to Key Level with Tight Stop:
-  After acceptance, wait for price to rally back to resistance, then short
-  with a TIGHT stop above that level.
-
-  Entry hierarchy:
-  1. FVG BEAR pullback — price enters a bear FVG zone near/below IBL
-     Stop: FVG top + small buffer
-  2. VWAP rejection — price rallies to VWAP and fails
-     Stop: above VWAP + 0.4x IB range
-  3. EMA rejection — price touches EMA20 and rejects with negative delta
-     Stop: above EMA + 0.4x IB range
-  4. IBL retest fail — price retests IBL as resistance after breakdown
-     Stop: above IBL + 0.5x IB range
-
-Target: 1.5x IB (p_day), 2.0x IB (trend_down), 2.5x (compressed IB)
-
-Caution:
-  - At VAL: do NOT add short if poor low forming
-  - Watch liquidation volume drying post-14:00
+Design principle: Strategies EMIT SIGNALS, they do NOT manage positions.
 """
 
 from datetime import time
 from typing import Optional, List
 import pandas as pd
-import numpy as np
 
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
-from rockit_core.config.constants import (
-    ACCEPTANCE_MIN_BARS, ACCEPTANCE_MIN_BARS_BEAR, ACCEPTANCE_IDEAL_BARS,
-    PYRAMID_COOLDOWN_BARS, MAX_PYRAMIDS_STANDARD,
-    LONDON_CLOSE,
-)
+from rockit_core.config.constants import ACCEPTANCE_MIN_BARS_BEAR
 
-COMPRESSED_IB_THRESHOLD = 50.0
-
-# --- Stop and Target Multipliers (of IB range) ---
-STOP_FVG_BUFFER = 0.25
-STOP_VWAP_BUFFER = 0.40
-STOP_EMA_BUFFER = 0.40
-STOP_IBL_RETEST_BUFFER = 0.50
-STOP_MINIMUM_PTS = 15.0
-
-# Targets
-TARGET_P_DAY = 1.5
-TARGET_TREND = 2.0
-TARGET_COMPRESSED = 2.5
+# ── Study-optimized parameters ──
+STOP_FIXED_PTS = 50.0         # Fixed 50pt stop (wider to survive MAE)
+TARGET_FIXED_PTS = 125.0      # Fixed 125pt target (2.5:1 R:R, captures outsized moves)
+ADX_THRESHOLD = 35.0          # 15-min ADX >= 35 (bears need stronger trend signal)
+VWAP_PROXIMITY = 0.40         # Within 40% of IB range from VWAP
+EMA_PROXIMITY = 0.20          # Within 20% of IB range from EMA20
+ENTRY_CUTOFF = time(14, 0)    # No entries after 14:00
 
 
 class TrendDayBear(StrategyBase):
@@ -68,7 +41,7 @@ class TrendDayBear(StrategyBase):
 
     @property
     def applicable_day_types(self) -> List[str]:
-        return ['trend_down']
+        return []  # All day types — alignment + acceptance is the filter
 
     def on_session_start(self, session_date, ib_high, ib_low, ib_range, session_context):
         self._ib_high = ib_high
@@ -76,31 +49,14 @@ class TrendDayBear(StrategyBase):
         self._ib_range = ib_range
 
         self._acceptance_confirmed = False
-        self._acceptance_bar = None
         self._consecutive_below = 0
-        self._pyramid_count = 0
-        self._last_entry_bar = -999
-        self._last_entry_price = None
-        self._session_low = ib_low
-
-        self._compressed_ib = ib_range < COMPRESSED_IB_THRESHOLD
-
-        # Track recent swing high for stop placement
-        self._recent_swing_high = ib_low
+        self._signal_fired = False
 
     def on_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
-        strength = session_context.get('trend_strength', 'weak')
         current_price = bar['close']
         bar_time = session_context.get('bar_time')
 
-        if bar['low'] < self._session_low:
-            self._session_low = bar['low']
-
-        # Track recent swing high
-        if bar['high'] < self._ib_low + self._ib_range * 0.5:
-            self._recent_swing_high = max(self._recent_swing_high, bar['high'])
-
-        # -- Phase 1: Track acceptance --
+        # ── Phase 1: Track acceptance below IBL (3 consecutive bars) ──
         if not self._acceptance_confirmed:
             if current_price < self._ib_low:
                 self._consecutive_below += 1
@@ -109,170 +65,77 @@ class TrendDayBear(StrategyBase):
 
             if self._consecutive_below >= ACCEPTANCE_MIN_BARS_BEAR:
                 self._acceptance_confirmed = True
-                self._acceptance_bar = bar_index
-                self._recent_swing_high = bar['high']
 
             return None
 
-        # Update swing high after acceptance
-        if bar['high'] > self._recent_swing_high and bar['high'] < self._ib_high:
-            self._recent_swing_high = bar['high']
-
-        # -- Phase 2: Pullback entries after acceptance --
-        day_type = session_context.get('day_type', '')
-        if day_type not in ('trend_down', 'super_trend_down', 'p_day'):
-            return None
-        if strength == 'weak':
+        # Already fired for this session
+        if self._signal_fired:
             return None
 
-        trend_conf = session_context.get('trend_bear_confidence', 0.0)
-        if trend_conf < 0.375:
+        # Time gate
+        if bar_time and bar_time >= ENTRY_CUTOFF:
             return None
 
-        if bar_time and bar_time >= LONDON_CLOSE:
+        # ── Phase 2a: Skip counter-bias trades ──
+        bias = session_context.get('session_bias') or session_context.get('regime_bias', 'NEUTRAL')
+        if bias and bias.upper() in ('BULL', 'BULLISH'):
             return None
 
-        if bar_index - self._last_entry_bar < PYRAMID_COOLDOWN_BARS:
+        # NOTE: day_type gate removed — by the time this strategy fires
+        # (acceptance + ADX + EMA alignment), the engine has already
+        # classified the day as directional. The DuckDB "Neutral Range" label
+        # is a session-level final classification, not what the engine sees.
+
+        # ── Phase 3: Check 15-min EMA alignment (bear) ──
+        ema20_15m = bar.get('ema20_15m')
+        ema50_15m = bar.get('ema50_15m')
+        adx_15m = bar.get('adx14_15m')
+
+        if ema20_15m is None or pd.isna(ema20_15m):
+            return None
+        if ema50_15m is None or pd.isna(ema50_15m):
             return None
 
-        if bar.get('poor_low', False):
+        # Bear alignment: price < EMA20 < EMA50
+        if not (current_price < ema20_15m < ema50_15m):
             return None
 
-        # -- Initial Entry --
-        if self._pyramid_count == 0:
-            return self._check_initial_entry(bar, bar_index, session_context)
+        # ADX gate: strong trend only
+        if adx_15m is None or pd.isna(adx_15m) or adx_15m < ADX_THRESHOLD:
+            return None
 
-        # -- Pyramid entries --
-        if self._pyramid_count < MAX_PYRAMIDS_STANDARD:
-            if day_type in ('trend_down', 'super_trend_down'):
-                return self._check_pyramid_entry(bar, bar_index, session_context)
-
-        return None
-
-    def _check_initial_entry(
-        self, bar: pd.Series, bar_index: int, session_context: dict,
-    ) -> Optional[Signal]:
-        """
-        Pullback entry hierarchy for bear with stops sized to pullback level.
-
-        FVG used as CONFLUENCE only (not standalone entry — too noisy on 1-min).
-
-        Entry priority:
-          1. VWAP rejection — strongest mean reversion level
-          2. EMA20 rejection — trend pullback entry
-          3. IBL retest fail — breakdown level acting as resistance
-        """
-        current_price = bar['close']
-        confidence = 'high' if self._consecutive_below >= ACCEPTANCE_IDEAL_BARS else 'medium'
-        delta = bar.get('delta', 0)
-
-        # Price must still be below IBL (bear structure intact)
+        # Price must still be below IBL
         if current_price >= self._ib_low:
             return None
 
-        day_type = session_context.get('day_type', 'trend_down')
-
-        # Compute target
-        if day_type == 'p_day':
-            target_mult = TARGET_P_DAY
-        elif self._compressed_ib:
-            target_mult = TARGET_COMPRESSED
-        else:
-            target_mult = TARGET_TREND
-        target_price = current_price - (target_mult * self._ib_range)
-
-        # --- Entry 1: VWAP rejection (best proven entry) ---
-        # REQUIRES: negative delta (seller confirmation)
-        vwap = bar.get('vwap')
-        if vwap is not None and not pd.isna(vwap):
-            vwap_dist = abs(current_price - vwap) / self._ib_range if self._ib_range > 0 else 999
-            if vwap_dist < 0.40 and current_price < vwap and delta < 0:
-                stop = vwap + (self._ib_range * STOP_VWAP_BUFFER)
-                stop = max(stop, current_price + STOP_MINIMUM_PTS)
-                if stop - current_price >= STOP_MINIMUM_PTS:
-                    return self._build_signal(
-                        bar, bar_index, session_context,
-                        entry_type='VWAP_REJECTION',
-                        stop_price=stop,
-                        target_price=target_price,
-                        confidence='high',
-                    )
-
-        # IBL retest disabled — 37.5% WR with tight stops in testing.
-        # VWAP rejection is the only reliable trend bear entry.
-
-        return None
-
-    def _check_pyramid_entry(
-        self, bar: pd.Series, bar_index: int, session_context: dict,
-    ) -> Optional[Signal]:
-        """Pyramid on pullback to VWAP or EMA with confirmation."""
-        current_price = bar['close']
+        # ── Phase 3: Delta confirmation (sellers present) ──
         delta = bar.get('delta', 0)
-        has_fvg = bar.get('ifvg_bear_entry', False) or bar.get('fvg_bear', False)
-        has_fvg_15m = bar.get('fvg_bear_15m', False)
-
-        if current_price >= self._ib_low:
+        if pd.isna(delta):
+            delta = 0
+        if delta >= 0:
             return None
 
-        if self._compressed_ib:
-            target_mult = TARGET_COMPRESSED
-        else:
-            target_mult = TARGET_TREND
-        target_price = current_price - (target_mult * self._ib_range)
+        # ── Phase 4: Entry hierarchy ──
+        # Note: EMA20 (1-min) rejection was tested but had 23.7% WR in backtest.
+        # Only VWAP rejection and bear continuation are used.
+        entry_type = None
 
-        # Pyramid: EMA5 rejection
-        ema5 = bar.get('ema5')
-        if ema5 is not None and not pd.isna(ema5) and current_price < ema5:
-            ema_dist = (ema5 - current_price) / self._ib_range if self._ib_range > 0 else 999
-            if ema_dist < 0.15 and (delta < 0 or has_fvg):
-                stop = ema5 + (self._ib_range * 0.30)
-                stop = max(stop, current_price + STOP_MINIMUM_PTS)
-                if stop - current_price >= STOP_MINIMUM_PTS:
-                    return self._build_signal(
-                        bar, bar_index, session_context,
-                        entry_type=f'EMA5_PYRAMID_P{self._pyramid_count + 1}',
-                        stop_price=stop,
-                        target_price=target_price,
-                        confidence='high',
-                        pyramid=True,
-                    )
-
-        # Pyramid: VWAP rejection
+        # 1. VWAP rejection (strongest level)
         vwap = bar.get('vwap')
-        if vwap is not None and not pd.isna(vwap):
-            if bar['low'] <= vwap <= bar['high'] and current_price < vwap:
-                if delta < 0 or has_fvg or has_fvg_15m:
-                    stop = vwap + (self._ib_range * STOP_VWAP_BUFFER)
-                    stop = max(stop, current_price + STOP_MINIMUM_PTS)
-                    if stop - current_price >= STOP_MINIMUM_PTS:
-                        return self._build_signal(
-                            bar, bar_index, session_context,
-                            entry_type=f'VWAP_PYRAMID_P{self._pyramid_count + 1}',
-                            stop_price=stop,
-                            target_price=target_price,
-                            confidence='high',
-                            pyramid=True,
-                        )
+        if vwap is not None and not pd.isna(vwap) and self._ib_range > 0:
+            vwap_dist = abs(current_price - vwap) / self._ib_range
+            if vwap_dist < VWAP_PROXIMITY and current_price < vwap:
+                entry_type = 'VWAP_REJECTION'
 
-        return None
+        # 2. Bear continuation (below IBL with alignment, no specific pullback level)
+        if entry_type is None:
+            entry_type = 'BEAR_CONTINUATION'
 
-    def _build_signal(
-        self, bar: pd.Series, bar_index: int, session_context: dict,
-        entry_type: str, stop_price: float, target_price: float,
-        confidence: str, pyramid: bool = False,
-    ) -> Signal:
-        """Build a signal with the given stop and target."""
-        current_price = bar['close']
-        strength = session_context.get('trend_strength', 'weak')
+        # ── Build signal ──
+        self._signal_fired = True
 
-        if pyramid:
-            self._pyramid_count += 1
-        else:
-            self._pyramid_count = 1
-
-        self._last_entry_bar = bar_index
-        self._last_entry_price = current_price
+        stop_price = current_price + STOP_FIXED_PTS
+        target_price = current_price - TARGET_FIXED_PTS
 
         return Signal(
             timestamp=bar.get('timestamp', bar.name) if hasattr(bar, 'name') else bar.get('timestamp'),
@@ -282,8 +145,13 @@ class TrendDayBear(StrategyBase):
             target_price=target_price,
             strategy_name=self.name,
             setup_type=entry_type,
-            day_type=session_context.get('day_type', 'trend_down'),
-            trend_strength=strength,
-            confidence=confidence,
-            pyramid_level=self._pyramid_count - 1,
+            day_type=session_context.get('day_type', 'neutral'),
+            trend_strength=session_context.get('trend_strength', 'moderate'),
+            confidence='high',
+            metadata={
+                'ema20_15m': float(ema20_15m),
+                'ema50_15m': float(ema50_15m),
+                'adx14_15m': float(adx_15m),
+                'delta': float(delta),
+            },
         )
