@@ -9,6 +9,7 @@ from rockit_core.indicators.single_prints import (
     _assign_tpo_period,
     _build_tpo_profile,
     detect_single_print_zones,
+    detect_price_gap_zones,
     compute_prior_session_single_prints,
 )
 from datetime import time as _time
@@ -256,7 +257,7 @@ class TestDetectSinglePrintZones:
         assert zones == []
 
     def test_zone_dict_keys(self):
-        """Each zone dict has the required keys."""
+        """Each zone dict has the required keys including zone_type."""
         bars = _make_bars([
             ("2026-03-10 09:31:00", 102.00, 100.00),
             ("2026-03-10 10:01:00", 108.00, 100.00),
@@ -269,6 +270,96 @@ class TestDetectSinglePrintZones:
             assert "size_ticks" in z
             assert "period" in z
             assert "location" in z
+            assert "zone_type" in z
+            assert z["zone_type"] == "single_print"
+            assert isinstance(z["high"], float)
+            assert isinstance(z["low"], float)
+            assert isinstance(z["size_ticks"], int)
+
+
+# ---------------------------------------------------------------------------
+# Price gap (zero-print) zone detection
+# ---------------------------------------------------------------------------
+
+class TestDetectPriceGapZones:
+    def test_gap_between_non_overlapping_bars(self):
+        """
+        When two bars in different periods don't overlap, the gap between
+        them should be detected as a price gap zone.
+        Bar A: 100-102, Bar B: 104-106. Gap: 102.25-103.75 (6 ticks).
+        """
+        bars = _make_bars([
+            ("2026-03-10 09:31:00", 102.00, 100.00),  # A
+            ("2026-03-10 10:01:00", 106.00, 104.00),   # B
+        ])
+        zones = detect_price_gap_zones(bars, tick_size=0.25, min_zone_ticks=1)
+        assert len(zones) >= 1
+        # Find the gap zone between 102 and 104
+        gap_zone = [z for z in zones if z["low"] >= 102.0 and z["high"] <= 104.0]
+        assert len(gap_zone) == 1
+        assert gap_zone[0]["zone_type"] == "price_gap"
+        assert gap_zone[0]["size_ticks"] >= 4  # 102.25 to 103.75
+
+    def test_no_gaps_when_overlapping_bars(self):
+        """Bars that fully overlap should produce no price gaps."""
+        bars = _make_bars([
+            ("2026-03-10 09:31:00", 105.00, 100.00),  # A
+            ("2026-03-10 10:01:00", 105.00, 100.00),   # B
+        ])
+        zones = detect_price_gap_zones(bars, tick_size=0.25, min_zone_ticks=1)
+        assert len(zones) == 0
+
+    def test_no_gaps_when_contiguous_bars(self):
+        """Bars that are contiguous (no gap) should produce no price gaps."""
+        bars = _make_bars([
+            ("2026-03-10 09:31:00", 102.00, 100.00),  # A
+            ("2026-03-10 10:01:00", 104.00, 102.00),   # B (starts where A ends)
+        ])
+        zones = detect_price_gap_zones(bars, tick_size=0.25, min_zone_ticks=1)
+        assert len(zones) == 0
+
+    def test_min_zone_filter(self):
+        """Small gaps below min_zone_ticks should be filtered out."""
+        bars = _make_bars([
+            ("2026-03-10 09:31:00", 102.00, 100.00),  # A
+            ("2026-03-10 10:01:00", 106.00, 103.00),   # B (gap: 102.25-102.75 = 2 ticks)
+        ])
+        # With min_zone_ticks=4, the 2-tick gap should be filtered
+        zones = detect_price_gap_zones(bars, tick_size=0.25, min_zone_ticks=4)
+        assert len(zones) == 0
+
+    def test_zone_location_classification(self):
+        """Price gap zones should be classified relative to VA."""
+        bars = _make_bars([
+            ("2026-03-10 09:31:00", 102.00, 100.00),  # A
+            ("2026-03-10 10:01:00", 110.00, 106.00),   # B (big gap up)
+        ])
+        zones = detect_price_gap_zones(
+            bars, tick_size=0.25, vah=103.00, val=100.00, min_zone_ticks=4
+        )
+        assert len(zones) >= 1
+        above_zones = [z for z in zones if z["location"] == "above_vah"]
+        assert len(above_zones) >= 1
+
+    def test_empty_bars_returns_empty(self):
+        bars = pd.DataFrame(columns=["timestamp", "high", "low", "open", "close", "volume"])
+        zones = detect_price_gap_zones(bars, tick_size=0.25)
+        assert zones == []
+
+    def test_zone_dict_keys(self):
+        """Price gap zone dicts have the required keys."""
+        bars = _make_bars([
+            ("2026-03-10 09:31:00", 102.00, 100.00),
+            ("2026-03-10 10:01:00", 110.00, 106.00),
+        ])
+        zones = detect_price_gap_zones(bars, tick_size=0.25, vah=104.0, val=101.0, min_zone_ticks=4)
+        for z in zones:
+            assert "high" in z
+            assert "low" in z
+            assert "size_ticks" in z
+            assert "zone_type" in z
+            assert "location" in z
+            assert z["zone_type"] == "price_gap"
             assert isinstance(z["high"], float)
             assert isinstance(z["low"], float)
             assert isinstance(z["size_ticks"], int)
@@ -316,6 +407,26 @@ class TestComputePriorSessionSinglePrints:
         df = _make_multi_session_df(sessions)
         result = compute_prior_session_single_prints(df, tick_size=0.25, min_zone_ticks=5)
         assert "2026-03-09" not in result
+
+    def test_zones_include_zone_type(self):
+        """All zones returned should have a zone_type field."""
+        sessions = {
+            "2026-03-09": [
+                ("2026-03-09 09:31:00", 102.00, 100.00),
+                ("2026-03-09 10:01:00", 108.00, 100.00),
+                ("2026-03-09 10:31:00", 108.00, 106.00),
+            ],
+            "2026-03-10": [
+                ("2026-03-10 09:31:00", 108.00, 100.00),
+                ("2026-03-10 10:01:00", 108.00, 100.00),
+            ],
+        }
+        df = _make_multi_session_df(sessions)
+        result = compute_prior_session_single_prints(df, tick_size=0.25, min_zone_ticks=5)
+        for zones in result.values():
+            for z in zones:
+                assert "zone_type" in z
+                assert z["zone_type"] in ("single_print", "price_gap")
 
     def test_empty_df(self):
         df = pd.DataFrame(columns=["session_date", "timestamp", "high", "low", "open", "close", "volume"])

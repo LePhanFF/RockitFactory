@@ -192,6 +192,110 @@ def detect_single_print_zones(
                 "low": round(low, 4),
                 "size_ticks": size_ticks,
                 "period": ",".join(sorted(periods)),
+                "zone_type": "single_print",
+                "location": location,
+            }
+        )
+
+    return result
+
+
+def detect_price_gap_zones(
+    session_bars: pd.DataFrame,
+    tick_size: float = 0.25,
+    vah: Optional[float] = None,
+    val: Optional[float] = None,
+    min_zone_ticks: int = 4,
+) -> list[dict]:
+    """
+    Detect true price gap zones (zero-print levels) from 1-minute bar data.
+
+    A price gap is a price level between the session high and low where ZERO
+    TPO periods traded. The market moved so fast it skipped those prices
+    entirely, creating a "vacuum" that is a stronger fill signal than single
+    prints (1 TPO).
+
+    Args:
+        session_bars: DataFrame with 'timestamp', 'high', 'low' columns.
+                      Should contain RTH bars (9:30-16:00) for one session.
+        tick_size: Price bin size (0.25 for NQ/ES).
+        vah: Value Area High (for location classification). Optional.
+        val: Value Area Low (for location classification). Optional.
+        min_zone_ticks: Minimum zone size in ticks to include (default 4 = 1 pt on NQ).
+
+    Returns:
+        List of zone dicts: {high, low, size_ticks, zone_type, location}
+        - zone_type: always "price_gap"
+        - location: "above_vah", "below_val", "within_va", or "unknown"
+    """
+    if session_bars.empty:
+        return []
+
+    profile = _build_tpo_profile(session_bars, tick_size)
+    if not profile:
+        return []
+
+    # Determine session high/low from actual bar data (not just profile keys)
+    session_high = float(session_bars["high"].max())
+    session_low = float(session_bars["low"].min())
+
+    # Generate ALL price levels from session low to session high
+    all_levels = set()
+    level = np.floor(session_low / tick_size) * tick_size
+    top = np.ceil(session_high / tick_size) * tick_size
+    while level <= top + tick_size / 2:
+        all_levels.add(round(level, 4))
+        level += tick_size
+
+    # Zero-print levels: in the session range but NOT in the profile
+    zero_print_levels = sorted(all_levels - set(profile.keys()))
+
+    if not zero_print_levels:
+        return []
+
+    # Group contiguous zero-print levels into zones
+    zones = []
+    zone_start = zero_print_levels[0]
+    zone_end = zero_print_levels[0]
+
+    for i in range(1, len(zero_print_levels)):
+        price = zero_print_levels[i]
+        gap = price - zone_end
+        # Contiguous if within 1.5 * tick_size (tolerance for float rounding)
+        if gap <= tick_size * 1.5:
+            zone_end = price
+        else:
+            zones.append((zone_start, zone_end))
+            zone_start = price
+            zone_end = price
+
+    zones.append((zone_start, zone_end))
+
+    # Build output, filtering by min_zone_ticks
+    result = []
+    for low, high in zones:
+        size_ticks = round((high - low) / tick_size)
+        if size_ticks < min_zone_ticks:
+            continue
+
+        # Classify location relative to Value Area
+        zone_mid = (high + low) / 2
+        if vah is not None and val is not None:
+            if zone_mid > vah:
+                location = "above_vah"
+            elif zone_mid < val:
+                location = "below_val"
+            else:
+                location = "within_va"
+        else:
+            location = "unknown"
+
+        result.append(
+            {
+                "high": round(high, 4),
+                "low": round(low, 4),
+                "size_ticks": size_ticks,
+                "zone_type": "price_gap",
                 "location": location,
             }
         )
@@ -205,20 +309,23 @@ def compute_prior_session_single_prints(
     min_zone_ticks: int = 10,
 ) -> dict[str, list[dict]]:
     """
-    Compute single print zones for each session and map them to the NEXT session.
+    Compute single print zones and price gap zones for each session and map
+    them to the NEXT session.
 
     For each session date, the returned zones are from the PRIOR session
-    (since single prints from yesterday are what today's session may fill).
+    (since single prints / price gaps from yesterday are what today's session
+    may fill).
 
     This mirrors the pattern in value_area.add_prior_va_features().
 
     Args:
         df: DataFrame with 'session_date', 'timestamp', 'high', 'low', 'volume' columns.
         tick_size: Price bin size.
-        min_zone_ticks: Minimum zone size in ticks.
+        min_zone_ticks: Minimum zone size in ticks (for single prints).
 
     Returns:
-        Dict mapping session_date_str -> list of single print zones from the prior session.
+        Dict mapping session_date_str -> list of zone dicts from the prior session.
+        Each zone has a 'zone_type' field: "single_print" or "price_gap".
     """
     # Import here to avoid circular dependency
     from rockit_core.indicators.value_area import compute_session_value_areas
@@ -252,7 +359,7 @@ def compute_prior_session_single_prints(
             vah = va.vah
             val = va.val
 
-        zones = detect_single_print_zones(
+        sp_zones = detect_single_print_zones(
             prior_bars,
             tick_size=tick_size,
             vah=vah,
@@ -260,7 +367,15 @@ def compute_prior_session_single_prints(
             min_zone_ticks=min_zone_ticks,
         )
 
+        pg_zones = detect_price_gap_zones(
+            prior_bars,
+            tick_size=tick_size,
+            vah=vah,
+            val=val,
+            min_zone_ticks=4,  # Lower threshold for price gaps
+        )
+
         current_key = str(current_session)
-        result[current_key] = zones
+        result[current_key] = sp_zones + pg_zones
 
     return result

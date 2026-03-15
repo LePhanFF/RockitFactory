@@ -163,34 +163,41 @@ research_strategies:
       enabled: false         # gap fill needs to reach prior close — trail cuts the fill
 
   single_print_gap_fill:
-    enabled: false
-    description: "SP Gap Fill — zone extraction fixed but WR 30.4% (study 69.2%). Detection algorithm mismatch — needs quant study"
+    enabled: true
+    description: "SP Gap Fill — direction logic + detection fixes (103t, 56.3% WR, PF 2.73, +$32K)"
     day_types: [all]
     direction: both
 
   poor_highlow_repair:
-    enabled: false
-    description: "Poor HL Repair — DISABLED: PF 1.09, 31 trades. Needs enrichment data fix for detection"
+    enabled: true
+    description: "Poor HL Repair — LONG-only, 15pt stop, 1R target, trail 0.4/0.2 (28t, 75% WR, PF 2.07, +$2,438)"
     day_types: [all]
     direction: long
+    trail:
+      enabled: true
+      atr_period: 15
+      activate_mult: 0.4
+      trail_mult: 0.2
 
   cvd_divergence:
     enabled: false
-    description: "CVD Divergence — DISABLED: PF 0.78, 19.4% WR. No config fix reaches PF 1.5"
-    day_types: [all]
-    direction: long
+    description: "CVD Divergence — DISABLED: PF 1.42 best. Day-type + edge filters tested. Better as confirmation filter on 80P/OR Rev"
+    day_types: [BDay, Neutral]
+    direction: both
 
   rth_gap_fill:
-    enabled: false
-    description: "RTH Gap Fill — DISABLED: PF 0.83-1.42 across configs. VWAP confirm = 14t PF 0.83; gap_2x = 102t PF 1.42"
+    enabled: true
+    description: "RTH Gap Fill — both directions, fixed 50pt stop, full fill target (260t, 46.9% WR, PF 1.82, +$110K)"
     day_types: [all]
     direction: both
 
   double_distribution:
-    enabled: false
-    description: "Double Distribution — DISABLED: PF 1.30, 31 trades. LONG side losing (-$337)"
+    enabled: true
+    description: "Double Distribution — SHORT-only, 40pt stop, 3R target (16t, 50% WR, PF 3.28, +$13K)"
     day_types: [all]
-    direction: both
+    direction: short
+    trail:
+      enabled: false         # trailing kills DD (PF 1.02 vs 3.28) — winners need room to run to 3R
 
   va_edge_fade:
     enabled: true
