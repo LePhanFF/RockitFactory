@@ -50,7 +50,7 @@ credentials.json
 data/raw/
 data/processed/
 data/sessions/*.csv
-data/sessions/*.zip
+# Zips are checked in as seed data (extracted on first load by SessionDataManager)
 data/results/
 
 # ML artifacts
