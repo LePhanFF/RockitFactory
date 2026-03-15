@@ -169,10 +169,15 @@ research_strategies:
     direction: both
 
   poor_highlow_repair:
-    enabled: false
-    description: "Poor HL Repair — DISABLED: PF 1.09, 31 trades. Needs enrichment data fix for detection"
+    enabled: true
+    description: "Poor HL Repair — LONG-only, 15pt stop, 1R target, trail 0.4/0.2 (28t, 75% WR, PF 2.07, +$2,438)"
     day_types: [all]
     direction: long
+    trail:
+      enabled: true
+      atr_period: 15
+      activate_mult: 0.4
+      trail_mult: 0.2
 
   cvd_divergence:
     enabled: false
@@ -187,10 +192,12 @@ research_strategies:
     direction: both
 
   double_distribution:
-    enabled: false
-    description: "Double Distribution — DISABLED: PF 1.30, 31 trades. LONG side losing (-$337)"
+    enabled: true
+    description: "Double Distribution — SHORT-only, 3R target (17t, 41.2% WR, PF 1.99, +$6,190)"
     day_types: [all]
-    direction: both
+    direction: short
+    trail:
+      enabled: false         # trailing kills DD (PF 1.02 vs 1.99) — winners need room to run to 3R
 
   va_edge_fade:
     enabled: true

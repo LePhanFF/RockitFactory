@@ -10,7 +10,7 @@ from typing import Optional
 
 import pandas as pd
 
-from rockit_core.indicators.single_prints import detect_single_print_zones
+from rockit_core.indicators.single_prints import detect_single_print_zones, detect_price_gap_zones
 from rockit_core.indicators.poor_extremes import detect_poor_extremes
 
 
@@ -55,13 +55,27 @@ def enrich_prior_session_data(
         val = prior_bars.iloc[-1].get("prior_va_val") if "prior_va_val" in prior_bars.columns else None
 
         # Detect single print zones
-        zones = detect_single_print_zones(
+        _vah = float(vah) if vah is not None and pd.notna(vah) else None
+        _val = float(val) if val is not None and pd.notna(val) else None
+
+        sp_zones = detect_single_print_zones(
             prior_bars,
             tick_size=tick_size,
-            vah=float(vah) if vah is not None and pd.notna(vah) else None,
-            val=float(val) if val is not None and pd.notna(val) else None,
+            vah=_vah,
+            val=_val,
             min_zone_ticks=10,
         )
+
+        # Detect price gap zones (zero-print levels)
+        pg_zones = detect_price_gap_zones(
+            prior_bars,
+            tick_size=tick_size,
+            vah=_vah,
+            val=_val,
+            min_zone_ticks=4,
+        )
+
+        zones = sp_zones + pg_zones
 
         # Detect poor extremes
         poor = detect_poor_extremes(prior_bars, tick_size=tick_size)

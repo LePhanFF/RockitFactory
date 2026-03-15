@@ -13,18 +13,35 @@ Quant Study (274 NQ sessions, 2025-02 to 2026-03):
   With spread >= 100pts:
     - 46.7% WR, PF 2.19, $11,400 (30 trades)
 
+Tuning (2026-03-14, 274 NQ sessions):
+  SHORT-only is the key filter — LONG side is a net loser (-$337, PF 0.95).
+  Best config: SHORT-only + 3R target (30pt stop, 90pt target):
+    - 17t, 41.2% WR, PF 1.99, +$6,190, $364/trade
+  Trailing stops destroy performance (PF 1.02) — winners need room to run.
+  Higher POC spread thresholds (100/125) reduce trade count without improving PF.
+
+Aggressive Study (2026-03-14, 261 sessions):
+  Q1: Immediate entry (no pullback) is worse — 30% WR, PF 1.16.
+      Price returns to seam only 60% of the time. The pullback filter is valuable.
+  Q2: Prior VA failure does NOT improve results as a filter or predictor.
+      50% of DD sessions have VA failure, but the subset performs no better.
+  Best improvement: wider stop (40pt) gives room for seam retest noise.
+      40pt stop / 120pt target = 56.2% WR, PF 3.44, +$13,889, $868/trade.
+      Turns 2 losses into wins vs 30/90 by surviving initial seam retest.
+
 Pattern:
   1. Compute TPO profile every 5 bars to detect double distribution
   2. Require POC spread >= min_poc_spread (default 75 pts)
   3. Determine direction: price above separation = LONG (upper dist active)
   4. Wait for pullback to separation level (limit fill simulation)
   5. Stop: fixed points below/above separation
-  6. Target: fixed points in trend direction
+  6. Target: 3R (40pt stop * 3.0 = 120pt target)
 
 Key constraints:
   - Detection before 10:30 only (early detection has 2x better MFE)
   - Max 1 trade per session
   - Pullback fill window: 60 bars (1 hour)
+  - SHORT-only (LONG side is net loser)
 """
 
 from datetime import time as _time
@@ -53,8 +70,8 @@ TPO_MIN_TICKS = 20           # Min TPO ticks to attempt distribution detection
 TPO_MIN_PROFILE_RANGE = 10   # Min profile range (points)
 
 # Default stop/target
-DEFAULT_STOP_PTS = 30.0
-DEFAULT_TARGET_R = 2.5       # 30pt stop * 2.5 = 75pt target
+DEFAULT_STOP_PTS = 40.0
+DEFAULT_TARGET_R = 3.0       # 40pt stop * 3.0 = 120pt target
 
 
 class DoubleDistributionStrategy(StrategyBase):
@@ -70,10 +87,12 @@ class DoubleDistributionStrategy(StrategyBase):
         stop_model: Optional['StopModel'] = None,
         target_model: Optional['TargetModel'] = None,
         min_poc_spread: float = MIN_POC_SPREAD,
+        short_only: bool = True,
     ):
         self._stop_model = stop_model or FixedPointsStop(DEFAULT_STOP_PTS)
         self._target_model = target_model or RMultipleTarget(DEFAULT_TARGET_R)
         self._min_poc_spread = min_poc_spread
+        self._short_only = short_only
 
     @property
     def name(self) -> str:
@@ -264,6 +283,10 @@ class DoubleDistributionStrategy(StrategyBase):
         """Emit a signal at the separation level pullback."""
         entry_price = self._separation
         direction = self._direction
+
+        # Direction gate: SHORT-only filter (LONG side is net loser)
+        if self._short_only and direction == 'LONG':
+            return None
 
         model_direction = Direction.LONG if direction == 'LONG' else Direction.SHORT
         entry_signal = EntrySignal(
