@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Design System (ported from legacy RockitUI) ──────────────────────────── */
+:root {
+  /* DEFAULT: CYBER / DARK */
+  --bg-main: #020617;       /* slate-950 */
+  --bg-surface: #0f172a;    /* slate-900 */
+  --bg-panel: #1e293b;      /* slate-800 */
+  --border-color: #1e293b;  /* slate-800 */
+  --text-main: #e2e8f0;     /* slate-200 */
+  --text-muted: #64748b;    /* slate-500 */
+  --accent-primary: #6366f1; /* indigo-500 */
+  --accent-glow: rgba(99, 102, 241, 0.3);
+}
+
+[data-theme='light'] {
+  --bg-main: #f1f5f9;
+  --bg-surface: #ffffff;
+  --bg-panel: #e2e8f0;
+  --border-color: #cbd5e1;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --accent-primary: #2563eb;
+  --accent-glow: rgba(37, 99, 235, 0.2);
+}
+
+[data-theme='metal'] {
+  --bg-main: #0c0a09;
+  --bg-surface: #1c1917;
+  --bg-panel: #292524;
+  --border-color: #44403c;
+  --text-main: #d6d3d1;
+  --text-muted: #78716c;
+  --accent-primary: #f59e0b;
+  --accent-glow: rgba(245, 158, 11, 0.3);
+}
+
+/* ─── Scrollbar ────────────────────────────────────────────────────────────── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary);
+}
+
+/* ─── Animations ───────────────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--accent-glow); }
+  50% { box-shadow: 0 0 20px var(--accent-glow); }
+}
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ─── Utility ──────────────────────────────────────────────────────────────── */
+.glass {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
