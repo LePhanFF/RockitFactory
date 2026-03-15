@@ -55,7 +55,7 @@ data/results/
 
 # ML artifacts
 mlruns/
-models/
+/models/
 checkpoints/
 *.ckpt
 *.safetensors
