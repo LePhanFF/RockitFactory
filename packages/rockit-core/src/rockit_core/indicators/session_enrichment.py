@@ -51,8 +51,11 @@ def enrich_prior_session_data(
             continue
 
         # Get prior VA for location classification
-        vah = prior_bars.iloc[-1].get("prior_va_vah") if "prior_va_vah" in prior_bars.columns else None
-        val = prior_bars.iloc[-1].get("prior_va_val") if "prior_va_val" in prior_bars.columns else None
+        # Use current session's prior_va_* columns (which contain session i-1's VA)
+        # NOT prior_bars.iloc[-1] which would give session i-2's VA (off-by-one)
+        current_bars = df[df["session_date"] == current_session]
+        vah = current_bars.iloc[0].get("prior_va_vah") if "prior_va_vah" in current_bars.columns and not current_bars.empty else None
+        val = current_bars.iloc[0].get("prior_va_val") if "prior_va_val" in current_bars.columns and not current_bars.empty else None
 
         # Detect single print zones
         _vah = float(vah) if vah is not None and pd.notna(vah) else None

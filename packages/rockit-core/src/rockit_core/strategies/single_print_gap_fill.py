@@ -36,11 +36,11 @@ from rockit_core.strategies.signal import Signal
 MIN_ZONE_TICKS = 10          # Minimum zone size in ticks
 TICK_SIZE = 0.25             # NQ tick size (pts)
 MIN_ZONE_PTS = MIN_ZONE_TICKS * TICK_SIZE  # 2.5 pts
-MORNING_CUTOFF = _time(11, 0)  # No entries after 11:00 AM ET
-MORNING_BAR_LIMIT = 30       # Fallback: ~30 bars post-IB ≈ 11:00
+MORNING_CUTOFF = _time(12, 0)  # No entries after 12:00 PM ET (study: 9:30-12:00)
+MORNING_BAR_LIMIT = 60       # Fallback: ~60 bars post-IB ≈ 12:00
 ATR_STOP_MULT = 1.0          # Stop = 1x ATR
 TARGET_R = 2.0               # Target = 2R
-MAX_SIGNALS_PER_SESSION = 1  # One signal per session
+MAX_SIGNALS_PER_SESSION = 99  # One signal per zone, unlimited zones per session
 
 
 class SinglePrintGapFill(StrategyBase):
@@ -203,29 +203,28 @@ class SinglePrintGapFill(StrategyBase):
             # Mark zone as touched
             self._touched_zones.add(i)
 
-            # Determine direction from zone location:
-            # above_vah → SHORT (price reaches up to fill zone, expect rejection)
-            # below_val → LONG (price reaches down to fill zone, expect bounce)
-            # Study best: above_vah|immediate|atr_1x|2R|morning|BOTH = 117t, 69.2% WR, PF 4.49
-            # NOTE: In practice, zone fill entries via backtest engine enter at
-            # market when price touches zone, so direction is zone-dependent.
-            zone_loc = zone.get('location', '')
-            if zone_loc == 'above_vah':
-                # Zone above VAH: price rose into zone, expect rejection → SHORT
-                direction = 'SHORT'
-                entry = close
-                stop = entry + ATR_STOP_MULT * self._atr
-                risk = stop - entry
-                target = entry - TARGET_R * risk
-            elif zone_loc == 'below_val':
-                # Zone below VAL: price fell into zone, expect bounce → LONG
+            # Determine direction from price APPROACH (study fix):
+            # prev_close > zone_mid → price fell INTO zone from above → LONG (bounce)
+            # prev_close < zone_mid → price rose INTO zone from below → SHORT (rejection)
+            zone_mid = (zone_high + zone_low) / 2
+            prev_close = session_context.get('prior_close', close)
+            if prev_close is None or (isinstance(prev_close, float) and pd.isna(prev_close)):
+                prev_close = close
+
+            entry = zone_mid  # Enter at zone midpoint (study: idealized entry)
+
+            if prev_close > zone_mid:
+                # Price approached from above → fell into zone → LONG (bounce)
                 direction = 'LONG'
-                entry = close
                 stop = entry - ATR_STOP_MULT * self._atr
                 risk = entry - stop
                 target = entry + TARGET_R * risk
             else:
-                continue  # Skip zones with unknown location
+                # Price approached from below → rose into zone → SHORT (rejection)
+                direction = 'SHORT'
+                stop = entry + ATR_STOP_MULT * self._atr
+                risk = stop - entry
+                target = entry - TARGET_R * risk
 
             if risk <= 0:
                 continue
