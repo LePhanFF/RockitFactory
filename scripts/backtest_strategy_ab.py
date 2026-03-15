@@ -8,11 +8,20 @@ For each strategy, runs:
 
 Persists both runs to DuckDB with labeled run_ids.
 Outputs comparison table per strategy.
+Saves per-strategy JSON reports to data/results/ab_{strategy}_{mode}_{timestamp}.json
 
 Usage:
-    .venv/Scripts/python.exe scripts/backtest_strategy_ab.py --strategies "OR Acceptance,Opening Range Rev"
-    .venv/Scripts/python.exe scripts/backtest_strategy_ab.py --strategies "80P Rule,20P IB Extension,VA Edge Fade,NWOG Gap Fill"
-    .venv/Scripts/python.exe scripts/backtest_strategy_ab.py --all
+    # Run both A and B for all strategies
+    python scripts/backtest_strategy_ab.py --all --no-merge
+
+    # Run only deterministic baseline (no LLM)
+    python scripts/backtest_strategy_ab.py --all --baseline-only --no-merge
+
+    # Run only LLM debate (no baseline)
+    python scripts/backtest_strategy_ab.py --all --llm-only --no-merge
+
+    # Run specific strategies
+    python scripts/backtest_strategy_ab.py --strategies or_reversal,b_day --no-merge
 """
 
 import argparse
@@ -148,7 +157,11 @@ def main():
     parser.add_argument("--instrument", default="NQ")
     parser.add_argument("--no-merge", action="store_true")
     parser.add_argument("--baseline-only", action="store_true", help="Only run A (no LLM)")
+    parser.add_argument("--llm-only", action="store_true", help="Only run B (LLM debate, no baseline)")
     args = parser.parse_args()
+
+    if args.baseline_only and args.llm_only:
+        parser.error("Cannot specify both --baseline-only and --llm-only")
 
     if args.all:
         strategy_keys = ALL_12
@@ -187,6 +200,16 @@ def main():
     except Exception:
         pass
 
+    # Determine run mode
+    run_baseline = not args.llm_only
+    run_llm = not args.baseline_only
+    mode_label = "baseline" if args.baseline_only else ("llm" if args.llm_only else "both")
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    results_dir = project_root / "data" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    log.info(f"Mode: {mode_label} | Strategies: {len(strategy_keys)}")
+
     # Results
     results = []
 
@@ -201,20 +224,24 @@ def main():
         log.info(f"  {strat_name} ({key})")
         log.info(f"{'='*60}")
 
+        metrics_a = None
+        metrics_b = None
+
         # Run A: Deterministic baseline
-        log.info(f"  Run A: Mechanical filters only...")
-        result_a = run_single_strategy(df, args.instrument, key, session_bias,
-                                       trail_configs, use_debate=False)
-        if result_a is None:
-            continue
-        metrics_a = compute_metrics(result_a.trades)
-        log.info(f"  A: {metrics_a['trades']}t, {metrics_a['win_rate']}% WR, "
-                 f"PF {metrics_a['profit_factor']}, ${metrics_a['net_pnl']:,.0f}")
-        persist_to_duckdb(result_a, key, "A_deterministic", args.instrument, metrics_a)
+        if run_baseline:
+            log.info(f"  Run A: Mechanical filters only...")
+            result_a = run_single_strategy(df, args.instrument, key, session_bias,
+                                           trail_configs, use_debate=False)
+            if result_a is None:
+                log.warning(f"  Run A failed for {key}")
+            else:
+                metrics_a = compute_metrics(result_a.trades)
+                log.info(f"  A: {metrics_a['trades']}t, {metrics_a['win_rate']}% WR, "
+                         f"PF {metrics_a['profit_factor']}, ${metrics_a['net_pnl']:,.0f}")
+                persist_to_duckdb(result_a, key, "A_deterministic", args.instrument, metrics_a)
 
         # Run B: With LLM debate
-        metrics_b = None
-        if not args.baseline_only:
+        if run_llm:
             log.info(f"  Run B: Mechanical + LLM debate...")
             result_b = run_single_strategy(df, args.instrument, key, session_bias,
                                            trail_configs, use_debate=True)
@@ -224,16 +251,34 @@ def main():
                          f"PF {metrics_b['profit_factor']}, ${metrics_b['net_pnl']:,.0f}")
                 persist_to_duckdb(result_b, key, "B_LLM", args.instrument, metrics_b)
 
-        results.append({
+        # Skip if both runs failed
+        if metrics_a is None and metrics_b is None:
+            continue
+
+        strat_result = {
             "strategy": strat_name,
             "key": key,
+            "instrument": args.instrument,
+            "timestamp": timestamp,
             "A": metrics_a,
             "B": metrics_b,
-        })
+        }
+        results.append(strat_result)
+
+        # Save per-strategy report
+        strat_report_path = results_dir / f"ab_{key}_{mode_label}_{timestamp}.json"
+        with open(strat_report_path, "w", encoding="utf-8") as f:
+            json.dump(strat_result, f, indent=2, default=str)
+        log.info(f"  Report: {strat_report_path.name}")
 
     # Summary table
+    def _fmt(m):
+        if m is None:
+            return "         (not run)         "
+        return f"{m['trades']:>4d} {m['win_rate']:>5.1f}% {m['profit_factor']:>5.2f} ${m['net_pnl']:>8,.0f}"
+
     log.info(f"\n{'='*80}")
-    log.info(f"  A/B TEST SUMMARY")
+    log.info(f"  A/B TEST SUMMARY  ({mode_label})")
     log.info(f"{'='*80}")
     log.info(f"  {'Strategy':<22s} | {'A: Deterministic':^30s} | {'B: LLM Debate':^30s} | Delta PnL")
     log.info(f"  {'':<22s} | {'Trades WR%   PF     PnL':^30s} | {'Trades WR%   PF     PnL':^30s} |")
@@ -244,29 +289,35 @@ def main():
     for r in results:
         a = r["A"]
         b = r["B"]
-        total_a += a["net_pnl"]
-
-        a_str = f"{a['trades']:>4d} {a['win_rate']:>5.1f}% {a['profit_factor']:>5.2f} ${a['net_pnl']:>8,.0f}"
-
+        if a:
+            total_a += a["net_pnl"]
         if b:
             total_b += b["net_pnl"]
-            b_str = f"{b['trades']:>4d} {b['win_rate']:>5.1f}% {b['profit_factor']:>5.2f} ${b['net_pnl']:>8,.0f}"
+
+        a_str = _fmt(a)
+        b_str = _fmt(b)
+
+        if a and b:
             delta = b["net_pnl"] - a["net_pnl"]
             d_str = f"${delta:>+8,.0f}"
         else:
-            b_str = "  (not run)"
             d_str = ""
 
         log.info(f"  {r['strategy']:<22s} | {a_str} | {b_str} | {d_str}")
 
-    if total_b > 0:
-        log.info(f"\n  Total A: ${total_a:,.0f}  |  Total B: ${total_b:,.0f}  |  Delta: ${total_b - total_a:>+,.0f}")
+    if run_baseline:
+        log.info(f"\n  Total A (deterministic): ${total_a:,.0f}")
+    if run_llm:
+        log.info(f"  Total B (LLM debate):    ${total_b:,.0f}")
+    if run_baseline and run_llm:
+        log.info(f"  Delta:                   ${total_b - total_a:>+,.0f}")
 
-    # Save JSON
-    out_path = project_root / "data" / "results" / f"ab_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    # Save combined summary JSON
+    out_path = results_dir / f"ab_test_{mode_label}_{timestamp}.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, default=str)
-    log.info(f"\nResults saved: {out_path}")
+    log.info(f"\nSummary: {out_path}")
+    log.info(f"Per-strategy reports: data/results/ab_{{strategy}}_{mode_label}_{timestamp}.json")
 
 
 if __name__ == "__main__":
