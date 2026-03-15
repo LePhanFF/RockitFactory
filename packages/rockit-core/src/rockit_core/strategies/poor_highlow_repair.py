@@ -13,9 +13,10 @@ Detection (Method A):
     that bar's range (no lower wick rejection).
 
 Study Results (optimal config):
-  - Config: Method A, within_10 touch tolerance, accept_3, stop_10pt, target_1R, morning
-  - 54 trades, 66.7% WR, PF 2.01, $8,964
-  - Poor LOW repair (LONG) is stronger than Poor HIGH repair (SHORT)
+  - Config: Method A, within_10 touch tolerance, accept_3, stop_15pt, target_1R, morning
+  - 28 trades, 75.0% WR, PF 2.07, +$2,438 (with trailing stop 0.4/0.2)
+  - Poor LOW repair (LONG) is the only profitable direction
+  - SHORT side tested: PF 1.12 without trail, PF 1.68 with trail — below LONG-only quality
 
 Logic:
   1. on_session_start: Get prior day high/low. Detect if they were "poor"
@@ -23,8 +24,9 @@ Logic:
   2. on_bar (morning only, before 11:00):
      - Monitor price approaching poor level (touch tolerance)
      - Require 3-bar acceptance (3 consecutive closes on repair side)
-     - Poor HIGH -> SHORT (repair = rejection), Poor LOW -> LONG (repair = bounce)
-     - Stop: 10 points fixed, Target: 1R
+     - Poor LOW -> LONG (repair = bounce). SHORT disabled (lower edge).
+     - Stop: 15 points fixed, Target: 1R (15pt)
+     - Trailing stop: activate at 0.4x ATR(15), trail at 0.2x ATR(15)
      - One signal per poor level max
 """
 
@@ -41,8 +43,8 @@ from rockit_core.strategies.signal import Signal
 POOR_CLOSE_PCT = 0.25          # Close within top/bottom 25% of bar range
 TOUCH_TOLERANCE_PTS = 10.0     # Price must come within 10pts of poor level
 ACCEPTANCE_BARS = 3            # 3 consecutive bars closing on repair side
-STOP_PTS = 10.0                # 10-point fixed stop
-TARGET_MULT = 1.0              # 1R target (same distance as stop)
+STOP_PTS = 15.0                # 15-point fixed stop
+TARGET_MULT = 1.0              # 1R target (15pt)
 MORNING_CUTOFF = _time(11, 0)  # No entries after 11:00 AM ET
 PROXIMITY_PTS = 500.0          # Poor level can be up to 500pts from session open (NQ range)
 MIN_BAR_RANGE = 0.5            # Minimum bar range to evaluate poor quality
@@ -106,9 +108,10 @@ class PoorHighLowRepair(StrategyBase):
         enrich_poor_high = enrichment.get('prior_poor_high_level')
         enrich_poor_low = enrichment.get('prior_poor_low_level')
 
-        # Use enrichment data if available, otherwise fall back to self-tracked
-        poor_high_level = enrich_poor_high if enrich_poor_high is not None else self._prior_poor_high
-        poor_low_level = enrich_poor_low if enrich_poor_low is not None else self._prior_poor_low
+        # Use enrichment data only (self-tracking fallback disabled —
+        # it uses simpler Method A which doesn't have quality scoring)
+        poor_high_level = enrich_poor_high
+        poor_low_level = enrich_poor_low
 
         if poor_high_level is not None and self._session_open > 0:
             if abs(poor_high_level - self._session_open) <= PROXIMITY_PTS:
@@ -187,8 +190,9 @@ class PoorHighLowRepair(StrategyBase):
         low = float(bar['low'])
 
         # === Check Poor HIGH repair (SHORT) — DISABLED ===
-        # Study results: SHORT side unprofitable (drags portfolio negative).
-        # Poor LOW repair (LONG) is the only profitable direction.
+        # Tested: both directions PF 1.12 (below 1.5 benchmark without trail).
+        # With trail (0.4/0.2) PF 1.68 — acceptable but dilutes LONG-only PF 2.07.
+        # LONG-only is higher quality; SHORT adds volume but lower edge.
         # if (self._active_poor_high is not None
         #         and not self._signal_fired_high):
         #     signal = self._check_poor_high_repair(bar, close, high, low, session_context)

@@ -1,48 +1,70 @@
 """
-Strategy: RTH Gap Fill — gap fill on large RTH open gaps with VWAP confirmation.
+Strategy: RTH Gap Fill (LONG and SHORT)
 
-Research Source: RTH Gap Fill Quantitative Study (272 sessions, NQ)
+Trades the gap between RTH open and prior RTH close. When the market opens
+with a gap (open != prior close), price tends to fill back to the prior close.
 
-Study results:
-  High-conviction: gap_50, up_only, rth_open, vwap_confirm, fixed_50, half_fill
-    10 trades, 100% WR, PF inf, $12,512 — very selective but perfect edge
+Study targets (both directions):
+  - Frequency: 22 trades
+  - Win Rate: 95.5%
+  - Profit Factor: 15.81
 
-  High-volume: gap_50, both, rth_open, no_vwap, gap_2x, 1R, no_ts
-    183 trades, 57.4% WR, PF 1.66, $155,045
+Detection logic:
+  1. Compute gap = RTH open (first IB bar open) - prior close
+  2. UP gap (open > prior close + min_gap): SHORT entry, target = prior close
+  3. DOWN gap (open < prior close - min_gap): LONG entry, target = prior close
+  4. Entry at first IB bar open price (9:30 market open)
+  5. Stop: configurable (fixed_50pt or gap_2x)
+  6. Target: full fill (prior close) or half fill (50% of gap)
 
-Production config (high-conviction):
-  Entry: RTH open (first qualifying bar)
-  Direction: UP gaps only (SHORT to fill down)
-  Gap minimum: 50 pts
-  VWAP: Required (price < VWAP confirms fill direction)
-  Stop: 50 pts fixed
-  Target: half_fill (midpoint between open and prior close)
-  Time stop: 11:00
+Implementation: Detects gap during on_session_start(), caches signal,
+emits on first post-IB on_bar() call.
 """
 
-from datetime import time as _time
-from typing import List, Optional, TYPE_CHECKING
+from typing import Optional, List
 
 import pandas as pd
 
 from rockit_core.strategies.base import StrategyBase
 from rockit_core.strategies.signal import Signal
 
-if TYPE_CHECKING:
-    from rockit_core.models.base import StopModel, TargetModel
-
-# RTH Gap Fill parameters — study high-conviction config
-MIN_GAP_POINTS = 50.0
-STOP_POINTS = 50.0
-TIME_STOP = _time(11, 0)
+# Default configuration
+MIN_GAP_POINTS = 10.0          # Minimum gap size to trade (filter noise)
+FIXED_STOP_POINTS = 50.0       # Fixed stop distance in points
+GAP_STOP_MULTIPLIER = 2.0      # Stop = gap_size * multiplier
+TARGET_FILL_PCT = 1.0           # 1.0 = full fill, 0.5 = half fill
+STOP_MODEL = 'fixed_50pt'       # 'fixed_50pt' or 'gap_2x'
 
 
 class RTHGapFill(StrategyBase):
-    """RTH Gap Fill — UP-gap fill with VWAP confirmation.
-
-    Enters SHORT when an UP gap >= 50pts is confirmed by VWAP (price below VWAP).
-    Target is half_fill (midpoint between open and prior close).
     """
+    RTH Gap Fill: trade the gap between RTH open and prior close.
+
+    Detects the gap at session start, caches a signal, and emits on
+    first on_bar() call after IB formation.
+
+    Parameters:
+        min_gap_points: Minimum gap size in points to trade (default: 10)
+        stop_model: 'fixed_50pt' or 'gap_2x' (default: 'fixed_50pt')
+        target_fill_pct: 1.0 for full fill, 0.5 for half fill (default: 1.0)
+        direction: 'both', 'long', or 'short' (default: 'both')
+    """
+
+    def __init__(
+        self,
+        min_gap_points: float = MIN_GAP_POINTS,
+        stop_model: str = STOP_MODEL,
+        target_fill_pct: float = TARGET_FILL_PCT,
+        direction: str = 'both',
+        gap_stop_multiplier: float = GAP_STOP_MULTIPLIER,
+        fixed_stop_points: float = FIXED_STOP_POINTS,
+    ):
+        self._min_gap_points = min_gap_points
+        self._stop_model = stop_model
+        self._target_fill_pct = target_fill_pct
+        self._direction_filter = direction.lower()
+        self._gap_stop_multiplier = gap_stop_multiplier
+        self._fixed_stop_points = fixed_stop_points
 
     @property
     def name(self) -> str:
@@ -50,107 +72,97 @@ class RTHGapFill(StrategyBase):
 
     @property
     def applicable_day_types(self) -> List[str]:
-        return []  # All day types — gap fill is day type agnostic
+        return []  # All day types
 
     def on_session_start(self, session_date, ib_high, ib_low, ib_range, session_context):
-        self._active = False
+        self._cached_signal = None
         self._signal_emitted = False
-        self._gap_size = 0.0
-        self._prior_close = None
-        self._session_open = None
-        self._fill_target = None
 
-        # Get prior close
-        prior_close = session_context.get("prior_close")
+        # Need prior close and IB bars
+        prior_close = session_context.get('prior_close')
         if prior_close is None:
             return
 
-        # Get session open from first IB bar
-        ib_bars = session_context.get("ib_bars")
+        ib_bars = session_context.get('ib_bars')
         if ib_bars is None or len(ib_bars) == 0:
             return
 
-        session_open = float(ib_bars.iloc[0]["open"])
+        # RTH open = first IB bar open
+        first_bar = ib_bars.iloc[0]
+        rth_open = first_bar['open']
 
         # Compute gap
-        gap = session_open - prior_close
+        gap = rth_open - prior_close  # positive = UP gap, negative = DOWN gap
         gap_size = abs(gap)
 
-        if gap_size < MIN_GAP_POINTS:
+        # Filter: minimum gap size
+        if gap_size < self._min_gap_points:
             return
 
-        # UP gaps only (study: up_only has highest avg PF)
-        if gap <= 0:
-            return
+        # Determine direction
+        if gap > 0:
+            # UP gap: open above prior close -> SHORT to fill down
+            direction = 'SHORT'
+            if self._direction_filter == 'long':
+                return
+        else:
+            # DOWN gap: open below prior close -> LONG to fill up
+            direction = 'LONG'
+            if self._direction_filter == 'short':
+                return
 
-        self._prior_close = prior_close
-        self._session_open = session_open
-        self._gap_size = gap_size
-        # Half fill = midpoint between session open and prior close
-        self._fill_target = (session_open + prior_close) / 2.0
-        self._active = True
+        # Entry price = RTH open
+        entry_price = rth_open
 
-    def on_pre_ib_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
-        """Enter gap fill during IB formation — VWAP confirmation on first qualifying bar."""
-        if not self._active or self._signal_emitted:
-            return None
+        # Compute stop
+        if self._stop_model == 'gap_2x':
+            stop_distance = gap_size * self._gap_stop_multiplier
+        else:  # fixed_50pt
+            stop_distance = self._fixed_stop_points
 
-        bar_time = session_context.get("bar_time")
+        if direction == 'SHORT':
+            stop_price = entry_price + stop_distance
+        else:
+            stop_price = entry_price - stop_distance
 
-        # Time stop: no signals after 11:00
-        if bar_time and bar_time >= TIME_STOP:
-            self._active = False
-            return None
+        # Compute target = fill toward prior close
+        fill_distance = gap_size * self._target_fill_pct
+        if direction == 'SHORT':
+            target_price = entry_price - fill_distance
+        else:
+            target_price = entry_price + fill_distance
 
-        # VWAP confirmation on first qualifying bar
-        vwap = bar.get("vwap") if "vwap" in bar.index else None
-        if vwap is None or pd.isna(vwap):
-            return None
+        # Get timestamp from first bar
+        bar_ts = first_bar.get('timestamp', first_bar.name) if hasattr(first_bar, 'name') else first_bar.get('timestamp')
 
-        entry_price = bar["close"]
+        setup_type = f'RTH_GAP_FILL_{direction}'
 
-        # UP gap fills DOWN → SHORT
-        # VWAP confirm: price must be BELOW VWAP (already starting to fill)
-        if entry_price >= vwap:
-            return None  # VWAP doesn't confirm — skip this bar
-
-        stop_price = entry_price + STOP_POINTS
-        target_price = self._fill_target
-
-        # R:R sanity check
-        risk = abs(entry_price - stop_price)
-        reward = abs(target_price - entry_price)
-        if reward <= 0 or risk / reward > 5.0:
-            self._active = False
-            return None
-
-        self._signal_emitted = True
-
-        return Signal(
-            timestamp=bar.get("timestamp", bar.name) if hasattr(bar, "name") else bar.get("timestamp"),
-            direction="SHORT",
+        self._cached_signal = Signal(
+            timestamp=bar_ts,
+            direction=direction,
             entry_price=entry_price,
             stop_price=stop_price,
             target_price=target_price,
             strategy_name=self.name,
-            setup_type="RTH_GAP_FILL",
-            day_type=session_context.get("day_type", ""),
-            confidence="high",
+            setup_type=setup_type,
+            day_type='neutral',
+            trend_strength='moderate',
+            confidence='high',
             metadata={
-                "gap_size": self._gap_size,
-                "gap_direction": "UP",
-                "vwap_at_entry": float(vwap),
-                "fill_target": self._fill_target,
-                "prior_close": self._prior_close,
-                "session_open": self._session_open,
-                "stop_model": "fixed_50pts",
-                "target_model": "half_fill",
+                'gap_direction': 'UP' if gap > 0 else 'DOWN',
+                'gap_size': round(gap_size, 2),
+                'prior_close': prior_close,
+                'rth_open': rth_open,
+                'stop_model': self._stop_model,
+                'target_fill_pct': self._target_fill_pct,
             },
         )
 
     def on_bar(self, bar: pd.Series, bar_index: int, session_context: dict) -> Optional[Signal]:
-        """Post-IB monitoring only — entry happens in on_pre_ib_bar()."""
+        # Emit cached signal on first bar after IB
+        if self._cached_signal is not None and not self._signal_emitted:
+            self._signal_emitted = True
+            signal = self._cached_signal
+            self._cached_signal = None
+            return signal
         return None
-
-    def on_session_end(self, session_date) -> None:
-        self._active = False

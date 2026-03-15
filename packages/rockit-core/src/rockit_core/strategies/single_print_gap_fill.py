@@ -115,6 +115,7 @@ class SinglePrintGapFill(StrategyBase):
                 'size_ticks': zone_size_ticks,
                 'size_pts': zone_size_pts,
                 'location': location,
+                'zone_type': zone.get('zone_type', 'single_print'),
             })
 
         self._day_type = session_context.get('day_type', '')
@@ -152,7 +153,13 @@ class SinglePrintGapFill(StrategyBase):
                     h = float(z['high'])
                     l = float(z['low'])
                     if not (pd.isna(h) or pd.isna(l)) and h > l:
-                        valid.append({'high': h, 'low': l})
+                        entry = {'high': h, 'low': l}
+                        # Preserve zone_type and location if available
+                        if 'zone_type' in z:
+                            entry['zone_type'] = z['zone_type']
+                        if 'location' in z:
+                            entry['location'] = z['location']
+                        valid.append(entry)
                 except (ValueError, TypeError):
                     continue
 
@@ -243,6 +250,7 @@ class SinglePrintGapFill(StrategyBase):
                     'zone_low': round(zone_low, 2),
                     'zone_size_ticks': round(zone['size_ticks'], 1),
                     'zone_location': zone['location'],
+                    'zone_type': zone.get('zone_type', 'single_print'),
                     'atr': round(self._atr, 2),
                 },
             )
